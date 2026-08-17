@@ -6,13 +6,26 @@ pause — with a real config reload.
 
 - **Bar widget** (`io.github.kkosu.voxtype-presets`): shows the active preset
   name. **Left click** cycles to the next preset, **right click** opens the
-  GTK4 preset manager popup (a standalone window, not a Quickshell panel).
+  GTK4 preset manager popup (a standalone floating window themed from the
+  current Omarchy theme, not a Quickshell panel).
 - **Keybind**: `SUPER + CTRL + ALT + V` cycles presets (added to
   `~/.config/hypr/bindings.lua`).
 - **Presets** are stored in `~/.config/voxtype/presets.json`; applying one
   patches `~/.config/voxtype/config.toml` (comments preserved, timestamped
   backup) and restarts the `voxtype.service` user daemon — the only reload
   voxtype currently supports.
+
+## Popup keyboard controls
+
+| Keys            | Action                          |
+|-----------------|---------------------------------|
+| `↑` `↓` / `j` `k` | Move between presets          |
+| `Enter`         | Apply the selected preset       |
+| `a`             | Add a new preset                |
+| `e`             | Edit the selected preset        |
+| `d`             | Delete (confirm with `y` / `n`) |
+| `Tab`           | Move focus between widgets      |
+| `Esc`           | Close the popup                 |
 
 ## Preset fields
 
@@ -33,7 +46,9 @@ pause — with a real config reload.
 
 This validates the plugin folder, copies the QML into
 `~/.config/omarchy/plugins/io.github.kkosu.voxtype-presets/`, installs the CLI
-and popup into `~/.local/bin/`, seeds `english` (from your current voxtype
+and popup into `~/.local/bin/`, adds the floating Hyprland windowrule for the
+popup to `~/.config/hypr/conf.d/voxtype-presets.conf` (then reloads Hyprland),
+seeds `english` (from your current voxtype
 config) and `icelandic` presets on first run, then enables the widget in the
 bar's right section.
 

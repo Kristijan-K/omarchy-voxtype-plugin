@@ -18,6 +18,11 @@ mkdir -p "$HOME/.local/bin"
 install -m 755 "$ROOT_DIR/bin/omarchy-voxtype-presets" "$HOME/.local/bin/omarchy-voxtype-presets"
 install -m 755 "$ROOT_DIR/bin/voxtype-presets-gui.py" "$HOME/.local/bin/voxtype-presets-gui.py"
 
+# Floating window rule for the popup (conf.d is sourced by hyprland.conf)
+mkdir -p "$HOME/.config/hypr/conf.d"
+install -m 644 "$ROOT_DIR/hypr/voxtype-presets.conf" "$HOME/.config/hypr/conf.d/voxtype-presets.conf"
+hyprctl reload
+
 # Seed presets from the current voxtype config on first install (no-op after)
 omarchy-voxtype-presets seed
 

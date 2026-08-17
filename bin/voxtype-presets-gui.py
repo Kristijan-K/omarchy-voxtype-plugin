@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """voxtype-presets-gui — GTK4 popup to manage Voxtype presets.
 
-Launched from the Omarchy bar widget's right click (a standalone window, not
-a Quickshell panel). Edit preset fields, add/delete presets, and apply one
-immediately — applying patches config.toml and restarts the voxtype daemon
-through `omarchy-voxtype-presets apply`.
+Launched from the Omarchy bar widget's right click (a standalone floating
+window, not a Quickshell panel). The window is themed from the current
+Omarchy theme (~/.local/state/omarchy/current/theme/colors.toml + shell.toml)
+and floated/rounded via a Hyprland windowrule on its application id.
+
+Keyboard controls (main window):
+  Up / Down / j / k   move between presets
+  Enter               apply the selected preset
+  a                   add a new preset
+  e                   edit the selected preset
+  d                   delete the selected preset (confirm with y / n)
+  Tab                 move focus between widgets
+  Escape              close the window
 
 A Gtk.Application id makes the window single-instance: right-clicking the bar
 widget again raises the existing popup instead of opening a second one.
@@ -18,10 +27,12 @@ from pathlib import Path
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gio, Gtk
+gi.require_version("Gdk", "4.0")
+from gi.repository import Gdk, Gio, Gtk
 
 APP_ID = "io.github.kkosu.voxtype-presets.gui"
 PRESETS = Path.home() / ".config/voxtype/presets.json"
+THEME_DIR = Path.home() / ".local/state/omarchy/current/theme"
 
 MODELS = [
     "base.en", "base", "small.en", "small", "medium.en", "medium",
@@ -30,6 +41,8 @@ MODELS = [
 ]
 LANGS = ["auto", "en", "is", "fr", "de", "es", "pt", "it", "nl", "sv",
          "da", "no", "fi", "pl", "ru", "uk", "ja", "zh", "ko", "ar", "hi"]
+
+KEY_HINTS = "↑/↓  j/k move · Enter apply · a add · e edit · d delete · Esc close"
 
 
 def load():
@@ -43,11 +56,172 @@ def save(data):
     PRESETS.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
+# --- Omarchy theming --------------------------------------------------------
+
+def parse_toml_flat(path):
+    """Flatten a simple TOML file into 'section.key' -> stripped string."""
+    data = {}
+    section = ""
+    if not path.exists():
+        return data
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if "=" in line:
+            key, value = line.split("=", 1)
+            data[f"{section}.{key.strip()}"] = value.strip().strip('"')
+    return data
+
+
+def hex_to_rgba(hex_color, alpha):
+    """'#a9b1d6' + 0.08 -> 'rgba(169,177,214,0.08)'."""
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 3:
+        hex_color = "".join(c * 2 for c in hex_color)
+    try:
+        r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return "rgba(169,177,214,0.08)"
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def theme_colors():
+    """Resolve the Omarchy palette the same way qs.Commons Color does."""
+    colors = parse_toml_flat(THEME_DIR / "colors.toml")
+    shell = parse_toml_flat(THEME_DIR / "shell.toml")
+
+    background = colors.get("background", "#1a1b26")
+    foreground = colors.get("foreground", "#a9b1d6")
+    accent = colors.get("accent", "#7aa2f7")
+    urgent = colors.get("red", "#f7768e")
+    muted = colors.get("dark_foreground", "#565f89")
+
+    selected_bg = shell.get("menu.selected-background", foreground)
+    selected_alpha = shell.get("menu.selected-background-alpha", "0.08")
+    try:
+        selected_alpha = max(0.0, min(1.0, float(selected_alpha)))
+    except ValueError:
+        selected_alpha = 0.08
+
+    return {
+        "background": background,
+        "foreground": foreground,
+        "accent": accent,
+        "urgent": urgent,
+        "muted": muted,
+        "popup_bg": shell.get("popups.background", background),
+        "popup_fg": shell.get("popups.text", foreground),
+        "selected_row_bg": hex_to_rgba(selected_bg, selected_alpha),
+        "selected_row_fg": shell.get("menu.selected-text", accent),
+        "hover_bg": hex_to_rgba(foreground, 0.05),
+        "border": hex_to_rgba(foreground, 0.25),
+        "font_size": shell.get("font.base-size", "12"),
+    }
+
+
+def build_css(c):
+    return f"""
+window, dialog {{
+  background-color: {c['popup_bg']};
+  color: {c['popup_fg']};
+  font-family: monospace;
+  font-size: {c['font_size']}px;
+}}
+headerbar {{
+  background-color: {c['popup_bg']};
+  color: {c['popup_fg']};
+  border-bottom: 1px solid {c['border']};
+  min-height: 40px;
+}}
+headerbar title {{
+  color: {c['popup_fg']};
+  font-weight: 700;
+}}
+label.heading {{
+  font-weight: 700;
+  color: {c['popup_fg']};
+}}
+label.dim-label {{
+  color: {c['muted']};
+  font-size: {max(9, int(c['font_size']) - 2)}px;
+}}
+listbox {{
+  background-color: transparent;
+  padding: 6px;
+}}
+listbox row {{
+  background-color: transparent;
+  border-radius: 8px;
+  margin: 1px 0;
+}}
+listbox row:hover {{
+  background-color: {c['hover_bg']};
+}}
+listbox row:selected {{
+  background-color: {c['selected_row_bg']};
+}}
+listbox row:selected label.heading {{
+  color: {c['selected_row_fg']};
+}}
+button {{
+  background-color: {hex_to_rgba(c['foreground'], 0.06)};
+  border: 1px solid {c['border']};
+  border-radius: 8px;
+  padding: 4px 12px;
+  color: {c['popup_fg']};
+  font-family: monospace;
+}}
+button:hover {{
+  background-color: {hex_to_rgba(c['foreground'], 0.12)};
+}}
+button.suggested-action {{
+  background-color: {c['accent']};
+  border-color: {c['accent']};
+  color: {c['background']};
+  font-weight: 700;
+}}
+button.destructive-action {{
+  color: {c['urgent']};
+  border-color: {hex_to_rgba(c['urgent'], 0.5)};
+}}
+entry, textview {{
+  background-color: {c['background']};
+  color: {c['popup_fg']};
+  border: 1px solid {c['border']};
+  border-radius: 6px;
+  font-family: monospace;
+}}
+combobox > box > button {{
+  background-color: {c['background']};
+  border-radius: 6px;
+}}
+checkbutton check {{
+  background-color: {c['background']};
+  border: 1px solid {c['border']};
+  border-radius: 4px;
+  min-width: 14px;
+  min-height: 14px;
+}}
+checkbutton check:checked {{
+  background-color: {c['accent']};
+}}
+scrolledwindow {{
+  background-color: transparent;
+}}
+"""
+
+
+# --- Dialogs ----------------------------------------------------------------
+
 class EditDialog(Gtk.Dialog):
     def __init__(self, parent, title, preset=None):
         super().__init__(title=title, transient_for=parent, modal=True,
                          use_header_bar=False)
-        self.set_default_size(460, 520)
+        self.set_default_size(480, 560)
 
         content = self.get_content_area()
         content.set_margin_top(12)
@@ -125,11 +299,41 @@ class EditDialog(Gtk.Dialog):
         }
 
 
+def confirm(parent, text):
+    """y/n confirmation dialog."""
+    dialog = Gtk.MessageDialog(transient_for=parent, modal=True,
+                               message_type=Gtk.MessageType.QUESTION,
+                               buttons=Gtk.ButtonsType.NONE, text=text)
+    dialog.add_button("No (n)", Gtk.ResponseType.CANCEL)
+    dialog.add_button("Yes (y)", Gtk.ResponseType.OK)
+
+    controller = Gtk.EventControllerKey.new()
+
+    def on_key(_ctrl, keyval, _keycode, _state):
+        name = Gdk.keyval_name(keyval)
+        if name in ("y", "Y"):
+            dialog.response(Gtk.ResponseType.OK)
+            return True
+        if name in ("n", "N"):
+            dialog.response(Gtk.ResponseType.CANCEL)
+            return True
+        return False
+
+    controller.connect("key-pressed", on_key)
+    dialog.add_controller(controller)
+    dialog.present()
+    result = dialog.run()
+    dialog.destroy()
+    return result
+
+
+# --- Main window ------------------------------------------------------------
+
 class PresetWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app)
         self.set_title("Voxtype Presets")
-        self.set_default_size(480, 430)
+        self.set_default_size(520, 560)
 
         header = Gtk.HeaderBar()
         self.set_titlebar(header)
@@ -145,17 +349,24 @@ class PresetWindow(Gtk.ApplicationWindow):
 
         scroll = Gtk.ScrolledWindow(child=self.listbox)
 
-        add_button = Gtk.Button(label="Add", action_name="win.add")
-        edit_button = Gtk.Button(label="Edit", action_name="win.edit")
-        delete_button = Gtk.Button(label="Delete", action_name="win.delete")
-        apply_button = Gtk.Button(label="Apply", action_name="win.apply")
+        hints = Gtk.Label(label=KEY_HINTS, halign=Gtk.Align.START)
+        hints.add_css_class("dim-label")
+        hints.set_margin_start(12)
+        hints.set_margin_end(12)
+        hints.set_margin_top(2)
+
+        add_button = Gtk.Button(label="Add (a)", action_name="win.add")
+        edit_button = Gtk.Button(label="Edit (e)", action_name="win.edit")
+        delete_button = Gtk.Button(label="Delete (d)", action_name="win.delete")
+        delete_button.add_css_class("destructive-action")
+        apply_button = Gtk.Button(label="Apply (Enter)", action_name="win.apply")
         apply_button.add_css_class("suggested-action")
 
         button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         button_box.set_margin_top(10)
-        button_box.set_margin_bottom(10)
-        button_box.set_margin_start(10)
-        button_box.set_margin_end(10)
+        button_box.set_margin_bottom(4)
+        button_box.set_margin_start(12)
+        button_box.set_margin_end(12)
         button_box.append(add_button)
         button_box.append(edit_button)
         button_box.append(delete_button)
@@ -165,8 +376,13 @@ class PresetWindow(Gtk.ApplicationWindow):
 
         main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         main.append(scroll)
+        main.append(hints)
         main.append(button_box)
         self.set_child(main)
+
+        key_controller = Gtk.EventControllerKey.new()
+        key_controller.connect("key-pressed", self.on_key)
+        self.add_controller(key_controller)
 
         self._add_actions()
         self.refresh()
@@ -183,6 +399,41 @@ class PresetWindow(Gtk.ApplicationWindow):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", lambda _a, _p, fn=handler: fn())
             self.add_action(action)
+
+    def on_key(self, _ctrl, keyval, _keycode, state):
+        name = Gdk.keyval_name(keyval) or ""
+        modifiers = state & Gdk.ModifierType.MODIFIER_MASK
+        if modifiers not in (0, Gdk.ModifierType.SHIFT_MASK):
+            return False
+        if name in ("j", "Down"):
+            self.move_selection(1)
+            return True
+        if name in ("k", "Up"):
+            self.move_selection(-1)
+            return True
+        if name in ("a", "A"):
+            self.on_add()
+            return True
+        if name in ("e", "E"):
+            self.on_edit()
+            return True
+        if name in ("d", "D"):
+            self.on_delete()
+            return True
+        if name == "Escape":
+            self.close()
+            return True
+        return False
+
+    def move_selection(self, delta):
+        row = self.listbox.get_selected_row()
+        if row is None:
+            target = self.listbox.get_first_child()
+        else:
+            target = row.get_next_sibling() if delta > 0 else row.get_prev_sibling()
+        if target is not None:
+            self.listbox.select_row(target)
+            target.grab_focus()
 
     def refresh(self):
         data = load()
@@ -279,16 +530,7 @@ class PresetWindow(Gtk.ApplicationWindow):
         name = self.selected_name()
         if not name:
             return
-        confirm = Gtk.MessageDialog(transient_for=self, modal=True,
-                                    message_type=Gtk.MessageType.QUESTION,
-                                    buttons=Gtk.ButtonsType.NONE,
-                                    text=f"Delete preset “{name}”?")
-        confirm.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        confirm.add_button("Delete", Gtk.ResponseType.OK)
-        confirm.present()
-        result = confirm.run()
-        confirm.destroy()
-        if result != Gtk.ResponseType.OK:
+        if confirm(self, f"Delete preset “{name}”?") != Gtk.ResponseType.OK:
             return
         data = load()
         data["presets"] = [p for p in data["presets"] if p.get("name") != name]
@@ -315,6 +557,14 @@ class App(Gtk.Application):
         if self.window is None:
             self.window = PresetWindow(self)
         self.window.present()
+
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        css = Gtk.CssProvider()
+        css.load_from_string(build_css(theme_colors()))
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 
 if __name__ == "__main__":
