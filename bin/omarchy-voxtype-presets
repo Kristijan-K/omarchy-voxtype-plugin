@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""omarchy-voxtype-presets — cycle, apply, and watch Voxtype presets.
+
+Presets are user-defined snapshots of five voxtype settings:
+  name            -> preset identifier (shown in the bar)
+  model           -> [whisper] model
+  language        -> [whisper] language
+  keywords        -> [whisper] initial_prompt ("Use these terms exactly when dictated: ...")
+  copyToClipboard -> [output] mode ("clipboard" or "type")
+  pauseMedia      -> [audio] pause_media (pause MPRIS players while recording)
+
+Storage:
+  ~/.config/voxtype/presets.json        presets + active name (edited by the GTK popup)
+  ~/.config/voxtype/presets-state.json  one-line JSON written on apply, streamed by `watch`
+
+Applying a preset patches ~/.config/voxtype/config.toml in place (comments and
+unrelated keys are preserved), backs the file up, and restarts the user
+voxtype systemd daemon — the only reload path voxtype currently supports.
+
+Commands:
+  list               print presets.json
+  state              print the current state line
+  cycle              apply the next preset after the active one
+  apply <name>       apply a specific preset
+  watch              stream the state line, reprinting whenever it changes
+  seed               create presets.json from the current config (first install)
+  gui                open the GTK4 preset manager popup
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HOME = Path.home()
+CONFIG = Path(os.environ.get("VOXTYPE_CONFIG", str(HOME / ".config/voxtype/config.toml")))
+PRESETS = HOME / ".config/voxtype/presets.json"
+STATE = HOME / ".config/voxtype/presets-state.json"
+GUI = Path(sys.argv[0]).resolve().parent / "voxtype-presets-gui.py"
+
+EMPTY_STATE = {"name": "", "model": "", "language": ""}
+
+
+def load():
+    if PRESETS.exists():
+        try:
+            return json.loads(PRESETS.read_text())
+        except Exception as exc:
+            print(f"presets.json unreadable: {exc}", file=sys.stderr)
+            sys.exit(1)
+    return {"active": "", "presets": []}
+
+
+def save(data):
+    PRESETS.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+def find_preset(data, name):
+    for preset in data.get("presets", []):
+        if preset.get("name") == name:
+            return preset
+    return None
+
+
+def state_json():
+    if STATE.exists():
+        try:
+            state = json.loads(STATE.read_text())
+            return {"name": str(state.get("name", "")),
+                    "model": str(state.get("model", "")),
+                    "language": str(state.get("language", ""))}
+        except Exception:
+            pass
+    return dict(EMPTY_STATE)
+
+
+# --- config.toml patching -------------------------------------------------
+
+def read_key(text, section, key):
+    """Read a key from a TOML section block, returning None when absent."""
+    lines = text.split("\n")
+    header = f"[{section}]"
+    inside = False
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=\s*(.*)$")
+    for line in lines:
+        stripped = line.strip()
+        if stripped == header:
+            inside = True
+            continue
+        if inside and stripped.startswith("["):
+            break
+        if inside:
+            match = pattern.match(line)
+            if match:
+                return match.group(1).strip()
+    return None
+
+
+def toml_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def patch_toml(text, section, key, value):
+    """Replace or insert `key = value` inside [section], preserving everything else."""
+    lines = text.split("\n")
+    header = f"[{section}]"
+    start = end = None
+    for i, line in enumerate(lines):
+        if line.strip() == header:
+            start = i
+        elif start is not None and line.strip().startswith("["):
+            end = i
+            break
+    if start is None:
+        lines += ["", header, f"{key} = {value}"]
+        return "\n".join(lines)
+    if end is None:
+        end = len(lines)
+    pattern = re.compile(rf"^(\s*){re.escape(key)}\s*=.*$")
+    for i in range(start + 1, end):
+        match = pattern.match(lines[i])
+        if match:
+            lines[i] = f"{match.group(1)}{key} = {value}"
+            return "\n".join(lines)
+    lines.insert(start + 1, f"{key} = {value}")
+    return "\n".join(lines)
+
+
+# --- applying ---------------------------------------------------------------
+
+def apply_preset(data, preset):
+    name = preset.get("name", "")
+    model = str(preset.get("model", "")).strip()
+    language = str(preset.get("language", "auto")).strip() or "auto"
+    keywords = str(preset.get("keywords", "")).strip()
+    copy_to_clipboard = bool(preset.get("copyToClipboard", True))
+    pause_media = bool(preset.get("pauseMedia", True))
+
+    prompt = f"Use these terms exactly when dictated: {keywords}" if keywords else ""
+
+    text = CONFIG.read_text() if CONFIG.exists() else ""
+    text = patch_toml(text, "whisper", "model", toml_value(model))
+    text = patch_toml(text, "whisper", "language", toml_value(language))
+    text = patch_toml(text, "whisper", "initial_prompt", toml_value(prompt))
+    text = patch_toml(text, "output", "mode", toml_value("clipboard" if copy_to_clipboard else "type"))
+    text = patch_toml(text, "audio", "pause_media", toml_value(pause_media))
+
+    if CONFIG.exists():
+        backup = CONFIG.with_name(CONFIG.name + f".bak.{int(time.time())}")
+        backup.write_text(CONFIG.read_text())
+
+    CONFIG.write_text(text)
+
+    data["active"] = name
+    save(data)
+    STATE.write_text(json.dumps({"name": name, "model": model, "language": language}, ensure_ascii=False) + "\n")
+
+    subprocess.run(
+        ["notify-send", "-a", "Voxtype",
+         f"Voxtype preset: {name}",
+         f"{model} · {language} · {'clipboard' if copy_to_clipboard else 'type'} · "
+         f"{'pause media' if pause_media else 'media untouched'}"],
+        check=False,
+    )
+    subprocess.run(["systemctl", "--user", "restart", "voxtype"], check=False)
+    print(f"applied {name}: model={model} language={language} "
+          f"output={'clipboard' if copy_to_clipboard else 'type'} pause_media={pause_media}")
+
+
+def cmd_list():
+    print(json.dumps(load(), ensure_ascii=False))
+
+
+def cmd_state():
+    print(json.dumps(state_json(), ensure_ascii=False), flush=True)
+
+
+def cmd_cycle():
+    data = load()
+    presets = data.get("presets", [])
+    if not presets:
+        print("no presets defined", file=sys.stderr)
+        return 1
+    active = data.get("active", "")
+    index = 0
+    for i, preset in enumerate(presets):
+        if preset.get("name") == active:
+            index = i
+            break
+    next_preset = presets[(index + 1) % len(presets)]
+    apply_preset(data, next_preset)
+    return 0
+
+
+def cmd_apply(name):
+    data = load()
+    preset = find_preset(data, name)
+    if preset is None:
+        print(f"no preset named {name!r}", file=sys.stderr)
+        return 1
+    apply_preset(data, preset)
+    return 0
+
+
+def cmd_watch():
+    last = None
+    while True:
+        current = state_json()
+        if current != last:
+            print(json.dumps(current, ensure_ascii=False), flush=True)
+            last = current
+        time.sleep(1)
+
+
+def cmd_seed():
+    if PRESETS.exists():
+        print(f"presets already exist at {PRESETS}")
+        return 0
+    text = CONFIG.read_text() if CONFIG.exists() else ""
+
+    def cfg(section, key, default):
+        value = read_key(text, section, key)
+        if value is None:
+            return default
+        value = value.strip()
+        if value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
+        return value
+
+    model = cfg("whisper", "model", "base.en")
+    language = cfg("whisper", "language", "en")
+    existing_prompt = cfg("whisper", "initial_prompt", "")
+    keywords = ""
+    if existing_prompt:
+        keywords = existing_prompt.split("dictated:", 1)[-1].strip()
+    mode = cfg("output", "mode", "clipboard")
+    pause_media = cfg("audio", "pause_media", "true") in ("true", "True", "1")
+
+    data = {
+        "active": "english",
+        "presets": [
+            {
+                "name": "english",
+                "model": model,
+                "language": language,
+                "keywords": keywords,
+                "copyToClipboard": mode != "type",
+                "pauseMedia": pause_media,
+            },
+            {
+                "name": "icelandic",
+                "model": "base",
+                "language": "is",
+                "keywords": "",
+                "copyToClipboard": True,
+                "pauseMedia": True,
+            },
+        ],
+    }
+    save(data)
+    STATE.write_text(json.dumps({"name": "english", "model": model, "language": language}, ensure_ascii=False) + "\n")
+    print(f"seeded presets at {PRESETS} (english + icelandic)")
+
+
+def cmd_gui():
+    args = [str(GUI)]
+    if shutil.which("uwsm-app"):
+        os.execvp("uwsm-app", ["uwsm-app", "--", sys.executable, *args])
+    os.execvp(sys.executable, [sys.executable, *args])
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__.strip(), file=sys.stderr)
+        return 1
+    command = sys.argv[1]
+    if command == "list":
+        return cmd_list()
+    if command == "state":
+        return cmd_state()
+    if command == "cycle":
+        return cmd_cycle()
+    if command == "apply" and len(sys.argv) >= 3:
+        return cmd_apply(sys.argv[2])
+    if command == "watch":
+        return cmd_watch()
+    if command == "seed":
+        return cmd_seed()
+    if command == "gui":
+        return cmd_gui()
+    print(f"unknown command {command!r}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

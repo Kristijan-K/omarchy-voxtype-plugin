@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.kkosu.voxtype-presets",
+  "name": "Voxtype Presets",
+  "version": "1.0.0",
+  "author": "kkosu",
+  "license": "MIT",
+  "description": "Cycle and manage Voxtype presets (model, language, vocabulary, output mode, media pause) from the Omarchy bar.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Voxtype Presets",
+    "description": "Switch Voxtype configuration presets.",
+    "category": "Status",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
