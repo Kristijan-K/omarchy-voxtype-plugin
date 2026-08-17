@@ -21,11 +21,22 @@ pause — with a real config reload.
 |-----------------|---------------------------------|
 | `↑` `↓` / `j` `k` | Move between presets          |
 | `Enter`         | Apply the selected preset       |
-| `a`             | Add a new preset                |
-| `e`             | Edit the selected preset        |
-| `d`             | Delete (confirm with `y` / `n`) |
-| `Tab`           | Move focus between widgets      |
+| `a`             | Add a preset (opens the TUI editor) |
+| `e`             | Edit the selected preset (same TUI) |
+| `d`             | Delete (confirm with `y` / `n`, Esc = no) |
 | `Esc`           | Close the popup                 |
+
+`a` / `e` open `voxtype-presets-edit` in the same floating presentation
+terminal the Dictation indicator uses for `voxtype configure` — a TUI with
+tabs styled from the current Omarchy theme:
+
+| Keys            | Action                                   |
+|-----------------|------------------------------------------|
+| `←` `→` / `Tab` / `Shift+Tab` | Switch tab (Model / Language / Keywords / Output) |
+| `j` `k` / `↑` `↓` | Move between items / toggle rows      |
+| `Enter` / `Space` | Select model or language, start keyword editing, toggle checkboxes |
+| `s` / `Ctrl+S`  | Save (re-applies when the preset is active) |
+| `q` / `Esc`     | Quit without saving                      |
 
 ## Preset fields
 

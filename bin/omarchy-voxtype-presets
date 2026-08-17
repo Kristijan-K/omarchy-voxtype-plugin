@@ -36,6 +36,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from voxtype_presets_lib import load, save  # noqa: E402
+
 HOME = Path.home()
 CONFIG = Path(os.environ.get("VOXTYPE_CONFIG", str(HOME / ".config/voxtype/config.toml")))
 PRESETS = HOME / ".config/voxtype/presets.json"
@@ -43,20 +46,6 @@ STATE = HOME / ".config/voxtype/presets-state.json"
 GUI = Path(sys.argv[0]).resolve().parent / "voxtype-presets-gui.py"
 
 EMPTY_STATE = {"name": "", "model": "", "language": ""}
-
-
-def load():
-    if PRESETS.exists():
-        try:
-            return json.loads(PRESETS.read_text())
-        except Exception as exc:
-            print(f"presets.json unreadable: {exc}", file=sys.stderr)
-            sys.exit(1)
-    return {"active": "", "presets": []}
-
-
-def save(data):
-    PRESETS.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def find_preset(data, name):

@@ -13,10 +13,12 @@ mkdir -p "$TARGET_DIR"
 find "$TARGET_DIR" -maxdepth 1 -type f -delete
 cp "$SOURCE_DIR"/* "$TARGET_DIR/"
 
-# CLI + GTK popup scripts
+# CLI + GTK popup + TUI scripts
 mkdir -p "$HOME/.local/bin"
 install -m 755 "$ROOT_DIR/bin/omarchy-voxtype-presets" "$HOME/.local/bin/omarchy-voxtype-presets"
 install -m 755 "$ROOT_DIR/bin/voxtype-presets-gui.py" "$HOME/.local/bin/voxtype-presets-gui.py"
+install -m 755 "$ROOT_DIR/bin/voxtype-presets-edit" "$HOME/.local/bin/voxtype-presets-edit"
+install -m 644 "$ROOT_DIR/bin/voxtype_presets_lib.py" "$HOME/.local/bin/voxtype_presets_lib.py"
 
 # Floating window rule for the popup (conf.d is sourced by hyprland.conf)
 mkdir -p "$HOME/.config/hypr/conf.d"
