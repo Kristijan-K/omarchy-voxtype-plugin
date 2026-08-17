@@ -13,20 +13,22 @@ mkdir -p "$TARGET_DIR"
 find "$TARGET_DIR" -maxdepth 1 -type f -delete
 cp "$SOURCE_DIR"/* "$TARGET_DIR/"
 
-# CLI + GTK popup + TUI scripts
+# CLI + TUI scripts
 mkdir -p "$HOME/.local/bin"
 install -m 755 "$ROOT_DIR/bin/omarchy-voxtype-presets" "$HOME/.local/bin/omarchy-voxtype-presets"
-install -m 755 "$ROOT_DIR/bin/voxtype-presets-gui.py" "$HOME/.local/bin/voxtype-presets-gui.py"
-install -m 755 "$ROOT_DIR/bin/voxtype-presets-edit" "$HOME/.local/bin/voxtype-presets-edit"
+install -m 755 "$ROOT_DIR/bin/voxtype-presets" "$HOME/.local/bin/voxtype-presets"
 install -m 644 "$ROOT_DIR/bin/voxtype_presets_lib.py" "$HOME/.local/bin/voxtype_presets_lib.py"
 
-# Floating window rule for the popup (conf.d is sourced by hyprland.conf)
-mkdir -p "$HOME/.config/hypr/conf.d"
-install -m 644 "$ROOT_DIR/hypr/voxtype-presets.conf" "$HOME/.config/hypr/conf.d/voxtype-presets.conf"
+# Retired pieces from the GTK-popup iteration
+rm -f "$HOME/.local/bin/voxtype-presets-gui.py" \
+      "$HOME/.local/bin/voxtype-presets-edit" \
+      "$HOME/.config/hypr/conf.d/voxtype-presets.conf"
 hyprctl reload
 
-# Seed presets from the current voxtype config on first install (no-op after)
+# Seed the default preset from the current voxtype config on first install
 omarchy-voxtype-presets seed
+# Clean legacy preset fields (keywords/copy/pause) if an older version ran
+omarchy-voxtype-presets migrate >/dev/null
 
 # Rescanning does not reconstruct an already enabled QML component. Disable
 # first so local installs always load the files that were just copied.

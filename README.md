@@ -1,53 +1,56 @@
 # omarchy-voxtype-plugin
 
 Omarchy Quattro bar plugin for switching between user-defined **Voxtype
-presets** — model, language, vocabulary keywords, output mode, and media
-pause — with a real config reload.
+presets** — a name plus a **model** and a **language** — with a real config
+reload.
 
-- **Bar widget** (`io.github.kkosu.voxtype-presets`): shows the active preset
-  name. **Left click** cycles to the next preset, **right click** opens the
-  GTK4 preset manager popup (a standalone floating window themed from the
-  current Omarchy theme, not a Quickshell panel).
-- **Keybind**: `SUPER + CTRL + ALT + V` cycles presets (added to
+- **Bar widget** (`io.github.kkosu.voxtype-presets`): shows the active
+  preset's language code (e.g. `󰍬 en`). **Left click** cycles to the next
+  preset, **right click** opens the preset TUI.
+- **One TUI for everything**: right-click opens `voxtype-presets` in the same
+  floating presentation terminal the built-in Dictation indicator uses for
+  `voxtype configure` — presets list, apply, add, edit (model + language),
+  and delete all in one window.
+- **Default preset**: `english` (`base.en` / `en`) is the Omarchy Quattro
+  default and cannot be deleted.
+- **Keybind**: `SUPER + CTRL + ALT + V` cycles presets (in
   `~/.config/hypr/bindings.lua`).
 - **Presets** are stored in `~/.config/voxtype/presets.json`; applying one
-  patches `~/.config/voxtype/config.toml` (comments preserved, timestamped
-  backup) and restarts the `voxtype.service` user daemon — the only reload
-  voxtype currently supports.
+  patches only `[whisper] model` and `[whisper] language` in
+  `~/.config/voxtype/config.toml` (comments preserved, timestamped backup)
+  and restarts the `voxtype.service` user daemon — the only reload voxtype
+  currently supports.
+- **Missing models download automatically**: switching to a preset downloads
+  the selected model (a fast no-op when it is already present). Whisper
+  models are fetched directly because Voxtype 0.7.5 incorrectly treats
+  Whisper `small` as the optional SenseVoice model. Other engine models use
+  `voxtype setup --download --model <name>`. The TUI does this inside the popup with a
+  "downloading …" message; only when the model is available does it apply the
+  config, reload the daemon, and close itself. On a download failure the
+  popup stays open with the error and nothing is changed. The bar left-click
+  and the cycle keybind download the same way.
 
-## Popup keyboard controls
+## TUI keys
 
-| Keys            | Action                          |
-|-----------------|---------------------------------|
-| `↑` `↓` / `j` `k` | Move between presets          |
-| `Enter`         | Apply the selected preset       |
-| `a`             | Add a preset (opens the TUI editor) |
-| `e`             | Edit the selected preset (same TUI) |
-| `d`             | Delete (confirm with `y` / `n`, Esc = no) |
-| `Esc`           | Close the popup                 |
+| Keys                          | Action                              |
+|-------------------------------|-------------------------------------|
+| `j` `k` / `↑` `↓`             | Move between presets or editor fields |
+| `h` `l` / `←` `→`             | Cycle the selected editor field     |
+| `Enter`                       | Switch to the selected preset      |
+| `a`                           | Add a preset and open the editor    |
+| `e`                           | Edit the selected preset            |
+| `d`                           | Delete selected preset (`y` / `n`)  |
+| `s`                           | Save all drafts, download missing models, apply the selected preset, then close |
+| `Esc`                         | Return from the editor, or close the popup |
+| `q`                           | Quit; with changes choose `y` save or `d` discard |
 
-`a` / `e` open `voxtype-presets-edit` in the same floating presentation
-terminal the Dictation indicator uses for `voxtype configure` — a TUI with
-tabs styled from the current Omarchy theme:
-
-| Keys            | Action                                   |
-|-----------------|------------------------------------------|
-| `←` `→` / `Tab` / `Shift+Tab` | Switch tab (Model / Language / Keywords / Output) |
-| `j` `k` / `↑` `↓` | Move between items / toggle rows      |
-| `Enter` / `Space` | Select model or language, start keyword editing, toggle checkboxes |
-| `s` / `Ctrl+S`  | Save (re-applies when the preset is active) |
-| `q` / `Esc`     | Quit without saving                      |
-
-## Preset fields
-
-| Field            | config.toml mapping                          |
-|------------------|----------------------------------------------|
-| name             | preset identifier (shown in the bar)         |
-| model            | `[whisper] model`                            |
-| language         | `[whisper] language`                         |
-| keywords         | `[whisper] initial_prompt` vocabulary hints  |
-| copyToClipboard  | `[output] mode` = `clipboard` or `type`      |
-| pauseMedia       | `[audio] pause_media` (MPRIS pause)          |
+The editor shows only two fields: `Model` and `Language`. Use `Enter` to type a
+custom value, or use `h/l` to cycle the supported values. Press `Esc` to return
+to the preset list; continue editing other presets if needed, then press `s`
+there to save all drafts and apply the selected preset. Exact duplicate
+model/language combinations are rejected, while the same language may use
+different models. Nothing is written until `s`, or until `q` is confirmed with
+the save option.
 
 ## Install
 
@@ -57,11 +60,8 @@ tabs styled from the current Omarchy theme:
 
 This validates the plugin folder, copies the QML into
 `~/.config/omarchy/plugins/io.github.kkosu.voxtype-presets/`, installs the CLI
-and popup into `~/.local/bin/`, adds the floating Hyprland windowrule for the
-popup to `~/.config/hypr/conf.d/voxtype-presets.conf` (then reloads Hyprland),
-seeds `english` (from your current voxtype
-config) and `icelandic` presets on first run, then enables the widget in the
-bar's right section.
+and TUI into `~/.local/bin/`, seeds the protected `english` default preset,
+then enables the widget in the bar's right section.
 
 ### Keybind
 
@@ -79,8 +79,8 @@ omarchy-voxtype-presets state         # active preset one-liner
 omarchy-voxtype-presets cycle         # apply next preset
 omarchy-voxtype-presets apply <name>  # apply specific preset
 omarchy-voxtype-presets watch         # stream state (used by the bar widget)
-omarchy-voxtype-presets gui           # open the GTK4 manager popup
-omarchy-voxtype-presets seed          # first-run preset seeding
+omarchy-voxtype-presets seed          # first-run default preset
+omarchy-voxtype-presets migrate       # strip legacy preset fields
 ```
 
 ## Debugging

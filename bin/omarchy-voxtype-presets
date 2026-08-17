@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """omarchy-voxtype-presets — cycle, apply, and watch Voxtype presets.
 
-Presets are user-defined snapshots of five voxtype settings:
-  name            -> preset identifier (shown in the bar)
-  model           -> [whisper] model
-  language        -> [whisper] language
-  keywords        -> [whisper] initial_prompt ("Use these terms exactly when dictated: ...")
-  copyToClipboard -> [output] mode ("clipboard" or "type")
-  pauseMedia      -> [audio] pause_media (pause MPRIS players while recording)
+A preset is a name + model + language. The built-in default preset
+(English, base.en) cannot be removed.
+
+  name     -> preset identifier
+  model    -> [whisper] model
+  language -> [whisper] language
 
 Storage:
-  ~/.config/voxtype/presets.json        presets + active name (edited by the GTK popup)
+  ~/.config/voxtype/presets.json        presets + active name (edited by the TUI)
   ~/.config/voxtype/presets-state.json  one-line JSON written on apply, streamed by `watch`
 
 Applying a preset patches ~/.config/voxtype/config.toml in place (comments and
@@ -23,27 +22,26 @@ Commands:
   cycle              apply the next preset after the active one
   apply <name>       apply a specific preset
   watch              stream the state line, reprinting whenever it changes
-  seed               create presets.json from the current config (first install)
-  gui                open the GTK4 preset manager popup
+  seed               create presets.json with the default English preset
+  migrate            strip legacy preset fields, keep name/model/language only
 """
 
+import copy
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from voxtype_presets_lib import load, save  # noqa: E402
+from voxtype_presets_lib import ensure_model, load, save  # noqa: E402
 
 HOME = Path.home()
 CONFIG = Path(os.environ.get("VOXTYPE_CONFIG", str(HOME / ".config/voxtype/config.toml")))
 PRESETS = HOME / ".config/voxtype/presets.json"
 STATE = HOME / ".config/voxtype/presets-state.json"
-GUI = Path(sys.argv[0]).resolve().parent / "voxtype-presets-gui.py"
 
 EMPTY_STATE = {"name": "", "model": "", "language": ""}
 
@@ -127,18 +125,25 @@ def apply_preset(data, preset):
     name = preset.get("name", "")
     model = str(preset.get("model", "")).strip()
     language = str(preset.get("language", "auto")).strip() or "auto"
-    keywords = str(preset.get("keywords", "")).strip()
-    copy_to_clipboard = bool(preset.get("copyToClipboard", True))
-    pause_media = bool(preset.get("pauseMedia", True))
 
-    prompt = f"Use these terms exactly when dictated: {keywords}" if keywords else ""
+    if not model:
+        print(f"preset {name!r} has no model", file=sys.stderr)
+        return 1
 
-    text = CONFIG.read_text() if CONFIG.exists() else ""
+    # Fetch the model first when it is missing; instant no-op when present.
+    print(f"checking model {model}…", file=sys.stderr)
+    ok, err = ensure_model(model)
+    if not ok:
+        print(f"model {model!r} download failed: {err}", file=sys.stderr)
+        return 1
+
+    before_data = copy.deepcopy(data)
+    before_config = CONFIG.read_text() if CONFIG.exists() else None
+    before_state = STATE.read_text() if STATE.exists() else None
+
+    text = before_config or ""
     text = patch_toml(text, "whisper", "model", toml_value(model))
     text = patch_toml(text, "whisper", "language", toml_value(language))
-    text = patch_toml(text, "whisper", "initial_prompt", toml_value(prompt))
-    text = patch_toml(text, "output", "mode", toml_value("clipboard" if copy_to_clipboard else "type"))
-    text = patch_toml(text, "audio", "pause_media", toml_value(pause_media))
 
     if CONFIG.exists():
         backup = CONFIG.with_name(CONFIG.name + f".bak.{int(time.time())}")
@@ -146,20 +151,44 @@ def apply_preset(data, preset):
 
     CONFIG.write_text(text)
 
+    def rollback(reason):
+        if before_config is None:
+            CONFIG.unlink(missing_ok=True)
+        else:
+            CONFIG.write_text(before_config)
+        save(before_data)
+        if before_state is None:
+            STATE.unlink(missing_ok=True)
+        else:
+            STATE.write_text(before_state)
+        restored = subprocess.run(["systemctl", "--user", "restart", "voxtype"],
+                                  check=False)
+        if restored.returncode != 0:
+            print("also failed to restore the previous voxtype configuration",
+                  file=sys.stderr)
+        print(reason, file=sys.stderr)
+        return 1
+
+    restart = subprocess.run(["systemctl", "--user", "restart", "voxtype"],
+                             check=False)
+    if restart.returncode != 0:
+        return rollback("failed to restart voxtype.service")
+    active = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
+                             "voxtype"], check=False)
+    if active.returncode != 0:
+        return rollback("voxtype.service is not active after applying preset")
+
     data["active"] = name
     save(data)
     STATE.write_text(json.dumps({"name": name, "model": model, "language": language}, ensure_ascii=False) + "\n")
-
     subprocess.run(
         ["notify-send", "-a", "Voxtype",
          f"Voxtype preset: {name}",
-         f"{model} · {language} · {'clipboard' if copy_to_clipboard else 'type'} · "
-         f"{'pause media' if pause_media else 'media untouched'}"],
+         f"{model} · {language}"],
         check=False,
     )
-    subprocess.run(["systemctl", "--user", "restart", "voxtype"], check=False)
-    print(f"applied {name}: model={model} language={language} "
-          f"output={'clipboard' if copy_to_clipboard else 'type'} pause_media={pause_media}")
+    print(f"applied {name}: model={model} language={language}")
+    return 0
 
 
 def cmd_list():
@@ -183,8 +212,7 @@ def cmd_cycle():
             index = i
             break
     next_preset = presets[(index + 1) % len(presets)]
-    apply_preset(data, next_preset)
-    return 0
+    return apply_preset(data, next_preset)
 
 
 def cmd_apply(name):
@@ -193,8 +221,7 @@ def cmd_apply(name):
     if preset is None:
         print(f"no preset named {name!r}", file=sys.stderr)
         return 1
-    apply_preset(data, preset)
-    return 0
+    return apply_preset(data, preset)
 
 
 def cmd_watch():
@@ -224,12 +251,6 @@ def cmd_seed():
 
     model = cfg("whisper", "model", "base.en")
     language = cfg("whisper", "language", "en")
-    existing_prompt = cfg("whisper", "initial_prompt", "")
-    keywords = ""
-    if existing_prompt:
-        keywords = existing_prompt.split("dictated:", 1)[-1].strip()
-    mode = cfg("output", "mode", "clipboard")
-    pause_media = cfg("audio", "pause_media", "true") in ("true", "True", "1")
 
     data = {
         "active": "english",
@@ -238,30 +259,58 @@ def cmd_seed():
                 "name": "english",
                 "model": model,
                 "language": language,
-                "keywords": keywords,
-                "copyToClipboard": mode != "type",
-                "pauseMedia": pause_media,
-            },
-            {
-                "name": "icelandic",
-                "model": "base",
-                "language": "is",
-                "keywords": "",
-                "copyToClipboard": True,
-                "pauseMedia": True,
+                "default": True,
             },
         ],
     }
     save(data)
     STATE.write_text(json.dumps({"name": "english", "model": model, "language": language}, ensure_ascii=False) + "\n")
-    print(f"seeded presets at {PRESETS} (english + icelandic)")
+    print(f"seeded presets at {PRESETS} (english default)")
 
 
-def cmd_gui():
-    args = [str(GUI)]
-    if shutil.which("uwsm-app"):
-        os.execvp("uwsm-app", ["uwsm-app", "--", sys.executable, *args])
-    os.execvp(sys.executable, [sys.executable, *args])
+def cmd_migrate():
+    """Strip legacy fields (keywords, copyToClipboard, pauseMedia)."""
+    data = load()
+    migrated = []
+    active = data.get("active", "")
+
+    def unique_name(name):
+        candidate = name or "preset"
+        if not any(p.get("name") == candidate for p in migrated):
+            return candidate
+        suffix = 2
+        while any(p.get("name") == f"{candidate}-{suffix}" for p in migrated):
+            suffix += 1
+        return f"{candidate}-{suffix}"
+
+    for preset in data.get("presets", []):
+        entry = {
+            "name": unique_name(str(preset.get("name", ""))),
+            "model": str(preset.get("model", "")).strip() or "base.en",
+            "language": str(preset.get("language", "auto")).strip() or "auto",
+        }
+        if any(p.get("model") == entry["model"] and
+               p.get("language") == entry["language"] for p in migrated):
+            if active == preset.get("name"):
+                active = next(p["name"] for p in migrated
+                              if p.get("model") == entry["model"] and
+                              p.get("language") == entry["language"])
+            continue
+        if bool(preset.get("default")) or (
+                entry["name"] == "english" and entry["model"] == "base.en" and
+                entry["language"] == "en"):
+            entry["default"] = True
+        migrated.append(entry)
+    if not any(p.get("default") for p in migrated):
+        name = unique_name("english")
+        migrated.insert(0, {"name": name, "model": "base.en",
+                            "language": "en", "default": True})
+        if not active:
+            active = name
+    data["presets"] = migrated
+    data["active"] = active
+    save(data)
+    print(json.dumps(data, ensure_ascii=False))
 
 
 def main():
@@ -281,8 +330,8 @@ def main():
         return cmd_watch()
     if command == "seed":
         return cmd_seed()
-    if command == "gui":
-        return cmd_gui()
+    if command == "migrate":
+        return cmd_migrate()
     print(f"unknown command {command!r}", file=sys.stderr)
     return 1
 

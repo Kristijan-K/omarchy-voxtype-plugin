@@ -6,10 +6,10 @@ import qs.Commons
 
 // Voxtype presets bar widget.
 //
-// Left click cycles to the next preset, right click opens the GTK4 preset
-// manager (a standalone popup, not a Quickshell panel). The active preset
-// name is streamed from the same kind of follow-process the built-in
-// Dictation indicator uses, so every bar instance updates live.
+// Shows the active preset's language code (e.g. "en", "is"). Left click
+// cycles to the next preset, right click opens the voxtype-configure-style
+// preset TUI in the same floating presentation terminal the Dictation
+// indicator uses for its config.
 
 BarWidget {
   id: root
@@ -19,7 +19,7 @@ BarWidget {
   property string presetModel: ""
   property string presetLanguage: ""
 
-  readonly property string labelText: presetName !== "" ? ("󰍬 " + presetName) : "󰍬"
+  readonly property string labelText: presetLanguage !== "" ? ("󰍬 " + presetLanguage) : "󰍬"
 
   function applyState(raw) {
     var data = Util.parseModuleJson(raw)
@@ -55,12 +55,12 @@ BarWidget {
     cursorShape: Qt.PointingHandCursor
     onClicked: function(mouse) {
       if (mouse.button === Qt.RightButton) {
-        Util.execDetached("\"$HOME/.local/bin/omarchy-voxtype-presets\" gui")
+        Util.execDetached("omarchy-launch-floating-terminal-with-presentation \"voxtype-presets\"")
       } else {
         Util.execDetached("\"$HOME/.local/bin/omarchy-voxtype-presets\" cycle")
       }
     }
-    onEntered: if (root.bar) root.bar.showTooltip(root, "Voxtype presets\nLeft click: cycle · Right click: manage")
+    onEntered: if (root.bar) root.bar.showTooltip(root, "Voxtype preset: " + presetName + "\n" + presetModel + " · " + presetLanguage + "\nLeft click: cycle · Right click: manage")
     onExited: if (root.bar) root.bar.hideTooltip(root)
   }
 }

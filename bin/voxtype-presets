@@ -1,0 +1,657 @@
+#!/usr/bin/env python3
+"""voxtype-presets — voxtype-configure-style TUI for Voxtype presets.
+
+One integrated TUI in the Dictate-style floating presentation terminal
+(launched by right-clicking the Omarchy bar widget via
+`omarchy-launch-floating-terminal-with-presentation "voxtype-presets"`).
+
+A preset is just a name + model + language. The built-in default preset
+(English, base.en) cannot be deleted.
+
+Keys:
+  j/k  ↑/↓               move between presets / editor fields
+  h/l  ←/→               cycle the selected editor field
+  Enter                  apply the selected preset / edit the field value
+  a                      add a preset and open the editor
+  e                      edit the selected preset
+  d                      delete the selected preset (confirm with y / n)
+  s                      save all drafts, download missing models, apply the
+                         selected preset, then close this popup
+  Esc                    leave the editor / close the popup
+  q                      quit; with unsaved changes choose save or discard
+
+Exiting with 130 makes the presentation wrapper skip the "Done!" prompt, so
+the floating terminal closes itself when the popup exits.
+"""
+
+import curses
+import copy
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from voxtype_presets_lib import ensure_model, load, save, theme_colors  # noqa: E402
+
+MODELS = [
+    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+    "medium", "medium.en", "large-v3", "large-v3-turbo",
+    "parakeet-tdt-0.6b-v3", "parakeet-tdt-0.6b-v3-int8",
+]
+# Whisper language table shipped in the voxtype binary, plus auto.
+LANGS = ["auto"] + """af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi fo fr gl gu ha haw he hi hr ht hu hy id is it ja ka kk km kn ko la lb ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no oc pa pl ps pt ro ru sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi yi yo yue zh""".split()
+
+DEFAULT_MODEL = "base.en"
+DEFAULT_LANG = "en"
+
+HINTS_PRESETS = "j/k move · Enter apply · a add · e edit · d delete · s save all · q quit"
+HINTS_EDITOR = "j/k or ↑/↓ field · h/l or ←/→ cycle · Enter type · Esc back"
+
+
+def hex_rgb(hex_color):
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 3:
+        hex_color = "".join(c * 2 for c in hex_color)
+    try:
+        return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return (169, 177, 214)
+
+
+def setup_colors(colors):
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+    except curses.error:
+        return {"fg": 0, "accent": 0, "muted": 0, "sel": 0}
+
+    def define(idx, hex_color):
+        r, g, b = hex_rgb(hex_color)
+        try:
+            curses.init_color(idx, int(r * 1000 / 255),
+                              int(g * 1000 / 255), int(b * 1000 / 255))
+        except curses.error:
+            pass
+
+    define(1, colors["background"])
+    define(2, colors["foreground"])
+    define(3, colors["accent"])
+    define(4, colors["muted"])
+
+    pairs = {}
+    try:
+        curses.init_pair(1, 2, 1)
+        curses.init_pair(2, 3, 1)
+        curses.init_pair(3, 4, 1)
+        curses.init_pair(4, 1, 3)
+        pairs = {
+            "fg": curses.color_pair(1),
+            "accent": curses.color_pair(2),
+            "muted": curses.color_pair(3),
+            "sel": curses.color_pair(4),
+        }
+    except curses.error:
+        pass
+    return pairs
+
+
+class Manager:
+    def __init__(self, stdscr, pairs):
+        self.stdscr = stdscr
+        self.pairs = pairs
+        self.data = load()
+        self.presets = copy.deepcopy(self.data.get("presets", []))
+        self.active = self.data.get("active", "")
+        self.sel = 0
+        for i, preset in enumerate(self.presets):
+            if preset.get("name") == self.active:
+                self.sel = i
+                break
+        self.field = 0
+        self.pending_delete = False
+        self.quit_prompt = False
+        self.message = ""
+        self.editing = False
+        self.edit_index = None
+        self.edit_original = None
+        self.edit_is_new = False
+        self.drafts = {}
+        self.draft_new = set()
+        self.removed = {}
+        self.sync_from_selected()
+
+    def pair(self, name):
+        return self.pairs.get(name, 0)
+
+    def selected(self):
+        if 0 <= self.sel < len(self.presets):
+            return self.presets[self.sel]
+        return None
+
+    def is_default(self, preset):
+        return bool(preset.get("default")) or (
+            preset.get("name") == "english" and
+            preset.get("model") == "base.en" and
+            preset.get("language") == "en")
+
+    def sync_from_selected(self):
+        preset = self.selected()
+        if preset is None:
+            self.model = ""
+            self.language = ""
+            return
+        self.model = str(preset.get("model", DEFAULT_MODEL))
+        self.language = str(preset.get("language", DEFAULT_LANG))
+
+    # --- main loop ----------------------------------------------------------
+
+    def run(self):
+        # Exit code 130 makes the presentation wrapper skip the "Done!"
+        # prompt, so the floating terminal closes itself.
+        while True:
+            self.draw()
+            ch = self.stdscr.getch()
+            if not self.top_key(ch):
+                return 130
+
+    def top_key(self, ch):
+        if self.pending_delete:
+            if ch in (ord("y"), ord("Y")):
+                self.do_delete()
+            else:
+                self.pending_delete = False
+                self.message = ""
+            return True
+        if self.quit_prompt:
+            return self.handle_quit_prompt(ch)
+        if ch in (ord("q"), ord("Q")):
+            return self.request_quit()
+        if ch == 27:
+            if self.editing:
+                self.leave_editor()
+                return True
+            if self.has_unsaved_changes():
+                return self.request_quit()
+            return False
+        if not self.editing and ch in (ord("s"), ord("S"), 19):
+            if self.do_switch():
+                return False
+            return True
+        if ch in (curses.KEY_DOWN, ord("j"), ord("J")):
+            self.move_item(1)
+            return True
+        if ch in (curses.KEY_UP, ord("k"), ord("K")):
+            self.move_item(-1)
+            return True
+        if self.editing and ch in (curses.KEY_LEFT, ord("h"), ord("H"), 353):
+            self.cycle_field(-1)
+            return True
+        if self.editing and ch in (curses.KEY_RIGHT, ord("l"), ord("L"), 9):
+            self.cycle_field(1)
+            return True
+        if self.editing and ch in (10, 13, curses.KEY_ENTER, 32):
+            self.activate_item()
+            return True
+        if not self.editing and (ch == ord("a") or ch == ord("A")):
+            self.do_add()
+            return True
+        if not self.editing and (ch == ord("e") or ch == ord("E")):
+            self.do_edit()
+            return True
+        if not self.editing and (ch == ord("d") or ch == ord("D")):
+            self.do_delete_prompt()
+            return True
+        if not self.editing and ch in (10, 13, curses.KEY_ENTER):
+            if self.apply_selected():
+                return False
+        return True
+
+    def move_item(self, delta):
+        if self.editing:
+            self.field = max(0, min(1, self.field + delta))
+            return
+        if self.presets:
+            self.sel = max(0, min(len(self.presets) - 1, self.sel + delta))
+            self.sync_from_selected()
+
+    def cycle_field(self, delta):
+        items = MODELS if self.field == 0 else LANGS
+        current = self.model if self.field == 0 else self.language
+        try:
+            index = items.index(current)
+        except ValueError:
+            index = 0 if delta > 0 else len(items) - 1
+        else:
+            index = (index + delta) % len(items)
+        value = items[index]
+        if self.field == 0:
+            self.model = value
+        else:
+            self.language = value
+        self.message = ""
+
+    def fetch_model(self, model):
+        """Download the preset's model when missing; fast no-op when present."""
+        self.message = f"downloading {model}… (first time only)"
+        self.draw()
+        ok, err = ensure_model(model)
+        if not ok:
+            self.message = f"download failed: {err[:80]}"
+            return False
+        return True
+
+    def activate_item(self):
+        prompt = "Model" if self.field == 0 else "Language"
+        current = self.model if self.field == 0 else self.language
+        ok, value = self.input_line(prompt, current)
+        if not ok or not value:
+            return
+        if self.field == 0:
+            self.model = value
+        else:
+            self.language = value
+
+    # --- actions -------------------------------------------------------------
+
+    def do_add(self):
+        ok, name = self.input_line("Preset name", "")
+        if not ok:
+            return
+        if (any(p.get("name") == name for p in self.presets) or
+                name in self.removed):
+            self.message = f"preset {name!r} already exists"
+            return
+        self.presets.append({"name": name, "model": DEFAULT_MODEL,
+                             "language": DEFAULT_LANG})
+        self.sel = len(self.presets) - 1
+        self.sync_from_selected()
+        self.editing = True
+        self.edit_index = self.sel
+        self.edit_is_new = True
+        self.edit_original = None
+        self.field = 0
+        self.message = f"editing {name!r} — Esc back, s save"
+
+    def do_edit(self):
+        preset = self.selected()
+        if preset is None:
+            return
+        name = preset["name"]
+        if name in self.drafts:
+            preset = self.drafts[name]
+            self.model = preset.get("model", DEFAULT_MODEL)
+            self.language = preset.get("language", DEFAULT_LANG)
+            self.edit_original = (None if name in self.draft_new else
+                                  dict(self.presets[self.sel]))
+            self.edit_is_new = name in self.draft_new
+        else:
+            self.edit_original = dict(preset)
+            self.edit_is_new = False
+        self.edit_index = self.sel
+        self.editing = True
+        self.field = 0
+        self.message = f"editing {preset['name']!r} — Esc back, s save"
+
+    def current_candidate(self):
+        if self.editing:
+            preset = self.presets[self.edit_index]
+            candidate = {
+                "name": preset["name"],
+                "model": self.model,
+                "language": self.language,
+            }
+            source = self.drafts.get(preset["name"], preset)
+            if self.is_default(source) or source.get("default"):
+                candidate["default"] = True
+            return candidate
+        return None
+
+    def edit_has_changes(self):
+        if not self.editing:
+            return False
+        candidate = self.current_candidate()
+        if self.edit_is_new:
+            return True
+        return candidate != self.edit_original
+
+    def leave_editor(self):
+        candidate = self.current_candidate()
+        name = candidate["name"]
+        if self.edit_has_changes():
+            self.drafts[name] = candidate
+            if self.edit_is_new:
+                self.draft_new.add(name)
+            self.message = f"unsaved changes for {candidate['name']!r} — press s to save"
+        else:
+            self.drafts.pop(name, None)
+            self.draft_new.discard(name)
+            self.message = ""
+        self.editing = False
+        self.edit_index = None
+        self.edit_original = None
+        self.edit_is_new = False
+        self.sync_from_selected()
+
+    def discard_changes(self):
+        new_names = set(self.draft_new)
+        if self.editing and self.edit_is_new:
+            new_names.add(self.presets[self.edit_index]["name"])
+        if new_names:
+            self.presets = [p for p in self.presets
+                            if p.get("name") not in new_names]
+            self.sel = min(self.sel, max(0, len(self.presets) - 1))
+        for index, preset in sorted(self.removed.values(), key=lambda item: item[0]):
+            if not any(p.get("name") == preset.get("name") for p in self.presets):
+                self.presets.insert(min(index, len(self.presets)), preset)
+        self.removed.clear()
+        self.drafts.clear()
+        self.draft_new.clear()
+        self.active = self.data.get("active", "")
+        self.editing = False
+        self.edit_index = None
+        self.edit_original = None
+        self.edit_is_new = False
+        self.sync_from_selected()
+
+    def has_unsaved_changes(self):
+        return bool(self.drafts or self.removed) or self.edit_has_changes()
+
+    def request_quit(self):
+        if not self.has_unsaved_changes():
+            return False
+        self.quit_prompt = True
+        self.message = "Save changes? y = save, d = discard, Esc = cancel"
+        return True
+
+    def handle_quit_prompt(self, ch):
+        if ch in (ord("y"), ord("Y")):
+            self.quit_prompt = False
+            if self.do_switch():
+                return False
+            return True
+        if ch in (ord("d"), ord("D")):
+            self.quit_prompt = False
+            self.discard_changes()
+            return False
+        if ch == 27:
+            self.quit_prompt = False
+            self.message = ""
+        return True
+
+    def do_delete_prompt(self):
+        if self.editing:
+            self.message = "press Esc to return to the list first"
+            return
+        preset = self.selected()
+        if preset is None:
+            return
+        if self.is_default(preset):
+            self.message = f"{preset['name']} is the default preset and cannot be removed"
+            return
+        self.pending_delete = True
+        self.message = f"Delete {preset['name']!r}? (y/n)"
+
+    def do_delete(self):
+        preset = self.selected()
+        if preset is None:
+            self.pending_delete = False
+            return
+        name = preset["name"]
+        index = self.sel
+        if name in self.draft_new:
+            self.draft_new.discard(name)
+        else:
+            self.removed[name] = (index, dict(preset))
+        self.drafts.pop(name, None)
+        self.presets = [p for p in self.presets if p.get("name") != name]
+        if self.active == name:
+            self.active = self.presets[0]["name"] if self.presets else ""
+        self.pending_delete = False
+        if self.sel >= len(self.presets):
+            self.sel = max(0, len(self.presets) - 1)
+        self.sync_from_selected()
+        self.message = f"deleted {name!r}"
+
+    def apply_selected(self):
+        """Apply a list selection without entering the editor."""
+        if self.has_unsaved_changes():
+            return self.do_switch()
+        preset = self.selected()
+        if preset is None:
+            self.message = "no preset selected"
+            return False
+        if not self.fetch_model(preset.get("model", "")):
+            return False
+        result = subprocess.run(["omarchy-voxtype-presets", "apply", preset["name"]],
+                                check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            self.message = (result.stderr or result.stdout or
+                            "failed to apply preset").strip()[:80]
+            return False
+        return True
+
+    def do_switch(self):
+        """Save all drafts, apply the selected preset, and close on success."""
+        selected = self.selected()
+        if selected is None:
+            self.message = "no preset selected"
+            return False
+
+        working = {p["name"]: dict(p) for p in self.presets}
+        working.update({name: dict(p) for name, p in self.drafts.items()})
+        if self.editing:
+            working[selected["name"]] = self.current_candidate()
+
+        pairs = {}
+        for name, candidate in working.items():
+            candidate["model"] = str(candidate.get("model", "")).strip()
+            candidate["language"] = str(candidate.get("language", "auto")).strip() or "auto"
+            if not candidate["model"]:
+                self.message = f"model cannot be empty in {name!r}"
+                return False
+            pair = (candidate["model"], candidate["language"])
+            if pair in pairs and pairs[pair] != name:
+                self.message = (f"duplicate model + language: {pair[0]} + {pair[1]} "
+                                f"({pairs[pair]} and {name})")
+                return False
+            pairs[pair] = name
+
+        selected_name = selected["name"]
+        candidate = working[selected_name]
+        pending_names = set(self.drafts)
+        if self.editing:
+            pending_names.add(selected_name)
+        pending_names.add(selected_name)
+        for name in pending_names:
+            if not self.fetch_model(working[name]["model"]):
+                return False
+
+        changed = self.has_unsaved_changes()
+        before_presets = copy.deepcopy(self.presets)
+        before_data = copy.deepcopy(self.data)
+        if changed:
+            self.presets = [working[p["name"]] for p in self.presets]
+            self.data["presets"] = self.presets
+            try:
+                save(self.data)
+            except OSError as exc:
+                self.presets = before_presets
+                self.data = before_data
+                self.message = f"could not save preset: {exc}"
+                if not self.editing:
+                    self.sync_from_selected()
+                return False
+
+        result = subprocess.run(["omarchy-voxtype-presets", "apply", candidate["name"]],
+                                check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            if changed:
+                self.presets = before_presets
+                self.data = before_data
+                save(self.data)
+            if not self.editing:
+                self.sync_from_selected()
+            self.message = (result.stderr or result.stdout or
+                            "failed to apply preset").strip()[:80]
+            return False
+
+        self.data = load()
+        self.presets = copy.deepcopy(self.data.get("presets", []))
+        self.active = self.data.get("active", "")
+        self.drafts.clear()
+        self.draft_new.clear()
+        self.removed.clear()
+        self.editing = False
+        self.edit_index = None
+        self.edit_original = None
+        self.edit_is_new = False
+        self.sel = next((i for i, p in enumerate(self.presets)
+                         if p.get("name") == candidate["name"]), self.sel)
+        self.sync_from_selected()
+        self.message = "applied — closing"
+        self.draw()
+        time.sleep(0.6)
+        return True
+
+    # --- input prompt ----------------------------------------------------------
+
+    def input_line(self, prompt, initial):
+        buf = list(initial)
+        pos = len(buf)
+        while True:
+            self.message = f"{prompt}: {''.join(buf)}_"
+            self.draw()
+            ch = self.stdscr.getch()
+            if ch in (10, 13):
+                value = "".join(buf).strip()
+                return bool(value), value
+            if ch == 27:
+                return False, initial
+            if ch in (curses.KEY_BACKSPACE, 127, 8):
+                if pos > 0:
+                    buf.pop(pos - 1)
+                    pos -= 1
+            elif ch == curses.KEY_DC:
+                if pos < len(buf):
+                    buf.pop(pos)
+            elif ch == curses.KEY_LEFT:
+                pos = max(0, pos - 1)
+            elif ch == curses.KEY_RIGHT:
+                pos = min(len(buf), pos + 1)
+            elif ch == 21:
+                buf = buf[pos:]
+                pos = 0
+            elif 32 <= ch < 127:
+                buf.insert(pos, chr(ch))
+                pos += 1
+
+    # --- drawing -----------------------------------------------------------------
+
+    def draw(self):
+        std = self.stdscr
+        std.erase()
+        height, width = std.getmaxyx()
+        height = max(height, 8)
+        width = max(width, 40)
+
+        preset = self.selected()
+        editing = preset["name"] if preset else "none"
+        title = (f" Voxtype Presets — editing: {editing} "
+                 if self.editing else " Voxtype Presets ")
+        try:
+            std.addnstr(0, 0, title.ljust(width)[:width - 1], self.pair("sel"))
+        except curses.error:
+            pass
+
+        top, bottom = 2, height - 3
+        try:
+            std.hline(top, 0, curses.ACS_HLINE, width - 1)
+            std.hline(bottom, 0, curses.ACS_HLINE, width - 1)
+            std.vline(top + 1, 0, curses.ACS_VLINE, bottom - top - 1)
+            std.vline(top + 1, width - 2, curses.ACS_VLINE, bottom - top - 1)
+            std.addch(top, 0, curses.ACS_ULCORNER)
+            std.addch(top, width - 2, curses.ACS_URCORNER)
+            std.addch(bottom, 0, curses.ACS_LLCORNER)
+            std.addch(bottom, width - 2, curses.ACS_LRCORNER)
+        except curses.error:
+            pass
+
+        inner_top, inner_bottom = top + 1, bottom - 1
+        max_items = max(1, inner_bottom - inner_top + 1)
+
+        if self.editing:
+            self.draw_editor(inner_top, width)
+        else:
+            self.draw_presets(max_items, inner_top, width)
+
+        if self.message:
+            try:
+                std.addnstr(height - 2, 3, self.message[:width - 5], width - 5,
+                            self.pair("accent"))
+            except curses.error:
+                pass
+        hints = HINTS_EDITOR if self.editing else HINTS_PRESETS
+        try:
+            std.addnstr(height - 1, 3, hints[:width - 5], width - 5, self.pair("muted"))
+        except curses.error:
+            pass
+        std.refresh()
+
+    def draw_presets(self, max_items, top, width):
+        if not self.presets:
+            try:
+                self.stdscr.addnstr(top, 3, "(no presets — press a to add)",
+                                    width - 6, self.pair("muted"))
+            except curses.error:
+                pass
+            return
+        offset = max(0, self.sel - max_items + 1)
+        shown = self.presets[offset:offset + max_items]
+        for i, preset in enumerate(shown):
+            index = offset + i
+            display = self.drafts.get(preset["name"], preset)
+            name = display.get("name", "")
+            check = "✓" if name == self.active else " "
+            lock = "🔒" if self.is_default(display) else " "
+            cursor = ">" if index == self.sel else " "
+            marker = "*" if preset.get("name") in self.drafts else " "
+            info = f"{display.get('model', '')} · {display.get('language', '')}"
+            row = f" {cursor} [{check}] {lock} {name}"
+            # Leave extra room for the wide lock glyph and keep the details
+            # clear of the right border instead of clipping the final char.
+            pad = max(0, width - 10 - len(row) - len(info))
+            text = f"{row}{' ' * pad} {marker} {info}"
+            pair = self.pair("sel") if index == self.sel else self.pair("fg")
+            try:
+                self.stdscr.addnstr(top + i, 3, text, width - 6, pair)
+            except curses.error:
+                pass
+
+    def draw_editor(self, top, width):
+        fields = (("Model", self.model), ("Language", self.language))
+        for row, (label, value) in enumerate(fields):
+            cursor = ">" if row == self.field else " "
+            text = f" {cursor} {label:<10} [ {value} ]"
+            pair = self.pair("sel") if row == self.field else self.pair("fg")
+            try:
+                self.stdscr.addnstr(top + row, 3, text, width - 6, pair)
+            except curses.error:
+                pass
+
+def run(stdscr):
+    stdscr.keypad(True)
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    pairs = setup_colors(theme_colors())
+    return Manager(stdscr, pairs).run()
+
+
+def main():
+    return curses.wrapper(run)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

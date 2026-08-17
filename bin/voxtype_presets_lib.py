@@ -5,6 +5,8 @@ directory to sys.path and import it as `voxtype_presets_lib`.
 """
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 PRESETS = Path.home() / ".config/voxtype/presets.json"
@@ -60,6 +62,61 @@ def hex_to_rgba(hex_color, alpha):
     except ValueError:
         r, g, b = 169, 177, 214
     return f"rgba({r},{g},{b},{alpha})"
+
+
+WHISPER_MODELS = {
+    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+    "medium", "medium.en", "large-v3", "large-v3-turbo",
+}
+
+
+def ensure_model(model):
+    """Download a voxtype model if it is not present yet.
+
+    Whisper models are downloaded directly because Voxtype 0.7.5 confuses
+    Whisper ``small`` with its optional SenseVoice model. Other engine models
+    use Voxtype's setup command. Returns (ok, error_message).
+    """
+    if model in WHISPER_MODELS:
+        # Voxtype 0.7.5 incorrectly classifies Whisper "small" as the
+        # optional SenseVoice model with the same short name. Download the
+        # Whisper artifact directly until that upstream collision is fixed.
+        data_home = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
+        models_dir = data_home / "voxtype" / "models"
+        destination = models_dir / f"ggml-{model}.bin"
+        if destination.exists() and destination.stat().st_size > 0:
+            return True, ""
+        models_dir.mkdir(parents=True, exist_ok=True)
+        partial = destination.with_name(destination.name + ".part")
+        url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{destination.name}"
+        try:
+            result = subprocess.run(
+                ["curl", "--fail", "--location", "--retry", "2",
+                 "--connect-timeout", "15", "--output", str(partial), url],
+                capture_output=True, text=True, timeout=7200)
+        except FileNotFoundError:
+            return False, "curl is not installed"
+        except subprocess.TimeoutExpired:
+            partial.unlink(missing_ok=True)
+            return False, "download timed out"
+        if result.returncode != 0:
+            partial.unlink(missing_ok=True)
+            return False, (result.stderr or result.stdout or "download failed").strip()
+        if not partial.exists() or partial.stat().st_size == 0:
+            partial.unlink(missing_ok=True)
+            return False, "download produced an empty file"
+        partial.replace(destination)
+        return True, ""
+
+    try:
+        result = subprocess.run(
+            ["voxtype", "setup", "--download", "--model", model, "--quiet"],
+            capture_output=True, text=True, timeout=7200)
+    except subprocess.TimeoutExpired:
+        return False, "download timed out"
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "download failed").strip()
+    return True, ""
 
 
 def theme_colors():
