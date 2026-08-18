@@ -6,7 +6,7 @@ set -euo pipefail
 source omarchy-restart-gum
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-presentation_script="omarchy-show-logo; \"$ROOT_DIR/bin/voxtype-presets\"; if (( $? != 130 )); then omarchy-show-done; fi"
+presentation_script="omarchy-show-logo; \"$ROOT_DIR/bin/omarchy-voxtype-presets\" seed >/dev/null; \"$ROOT_DIR/bin/voxtype-presets\"; if (( $? != 130 )); then omarchy-show-done; fi"
 
 exec setsid uwsm-app -- xdg-terminal-exec \
   --app-id=org.omarchy.voxtype-presets \

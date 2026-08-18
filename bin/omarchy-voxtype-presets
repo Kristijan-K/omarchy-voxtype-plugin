@@ -221,7 +221,7 @@ def cmd_state():
 
 
 def cmd_cycle():
-    data = load()
+    data = ensure_seeded()
     presets = data.get("presets", [])
     if not presets:
         print("no presets defined", file=sys.stderr)
@@ -237,7 +237,7 @@ def cmd_cycle():
 
 
 def cmd_apply(name):
-    data = load()
+    data = ensure_seeded()
     preset = find_preset(data, name)
     if preset is None:
         print(f"no preset named {name!r}", file=sys.stderr)
@@ -246,8 +246,7 @@ def cmd_apply(name):
 
 
 def cmd_watch():
-    if not load().get("presets"):
-        cmd_seed()
+    ensure_seeded()
     last = None
     while True:
         current = state_json()
@@ -255,6 +254,15 @@ def cmd_watch():
             print(json.dumps(current, ensure_ascii=False), flush=True)
             last = current
         time.sleep(1)
+
+
+def ensure_seeded():
+    """Create the initial default before any command needs preset data."""
+    data = load()
+    if not data.get("presets"):
+        cmd_seed()
+        data = load()
+    return data
 
 
 def cmd_seed():
