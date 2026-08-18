@@ -6,9 +6,19 @@ Repository: https://github.com/Kristijan-K/omarchy-voxtype-plugin
 
 ![Voxtype Presets preview](preview.png)
 
+Additional screenshots:
+
+![Voxtype preset notifications](assets/notifications.png)
+
+![Voxtype preset editor](assets/editor.png)
+
 An Omarchy Quattro bar plugin for switching between user-defined **Voxtype
 presets** — a name, **model**, **language**, keyword prompt, and media-pause
 setting — with a real config reload.
+
+This does not replace Voxtype's Dictation configuration or its normal
+configuration screen. It adds a quick way to switch between saved voice input
+presets, especially when changing languages or models during a call.
 
 - **Bar widget** (`io.github.kkosu.voxtype-presets`): shows the active
   preset's language code (e.g. `󰍬 en`). **Left click** cycles to the next
@@ -18,7 +28,8 @@ setting — with a real config reload.
   language, keywords, and media pause), and delete all in one window.
 - **Default preset**: `english` (`base.en` / `en`) is the Omarchy Quattro
   default and cannot be deleted.
-- **Keybind**: optionally bind `SUPER + CTRL + ALT + V` to the installed CLI.
+- **Keybind**: optionally bind `SUPER + CTRL + ALT + V` to cycle quickly between
+  voice presets during a call.
 - **Presets** are stored in `~/.config/voxtype/presets.json`; applying one
   patches `[whisper] model`, `[whisper] language`,
   `[whisper] initial_prompt`, and `[audio] pause_media` in
@@ -42,7 +53,7 @@ setting — with a real config reload.
 |-------------------------------|-------------------------------------|
 | `j` `k` / `↑` `↓`             | Move between presets or editor fields |
 | `h` `l` / `←` `→`             | Cycle the selected editor field     |
-| `Enter`                       | Switch to the selected preset      |
+| `Enter`                       | Apply the selected preset, or edit the selected editor field |
 | `a`                           | Add a preset and open the editor    |
 | `e`                           | Edit the selected preset            |
 | `d`                           | Delete selected preset (`y` / `n`)  |
@@ -88,7 +99,8 @@ omarchy plugin update io.github.kkosu.voxtype-presets
 
 ### Keybind
 
-Add this once to `~/.config/hypr/bindings.lua`, then run `hyprctl reload`:
+For quick language or voice-preset changes during a call, add this once to
+`~/.config/hypr/bindings.lua`, then run `hyprctl reload`:
 
 ```lua
 o.bind("SUPER + CTRL + ALT + V", "Cycle Voxtype preset", "bash -c '\"$HOME/.config/omarchy/plugins/io.github.kkosu.voxtype-presets/bin/omarchy-voxtype-presets\" cycle'")
