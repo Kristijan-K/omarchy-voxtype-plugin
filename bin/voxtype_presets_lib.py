@@ -5,6 +5,7 @@ Loaded from the plugin's `bin/` directory by the CLI and TUI scripts.
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -48,7 +49,8 @@ def parse_toml_flat(path):
             continue
         if "=" in line:
             key, value = line.split("=", 1)
-            data[f"{section}.{key.strip()}"] = value.strip().strip('"')
+            key = key.strip()
+            data[f"{section}.{key}" if section else key] = value.strip().strip('"')
     return data
 
 
@@ -134,6 +136,13 @@ def theme_colors():
     """Resolve the Omarchy palette the same way qs.Commons Color does."""
     colors = parse_toml_flat(THEME_DIR / "colors.toml")
     shell = parse_toml_flat(THEME_DIR / "shell.toml")
+    gum = {}
+    gum_path = THEME_DIR / "gum_env.lua"
+    if gum_path.exists():
+        for line in gum_path.read_text().splitlines():
+            match = re.search(r'hl\.env\("(GUM_[A-Z0-9_]+)", "([^"]+)"\)', line)
+            if match:
+                gum[match.group(1)] = match.group(2)
 
     background = colors.get("background", DEFAULT_THEME["background"])
     foreground = colors.get("foreground", DEFAULT_THEME["foreground"])
@@ -156,6 +165,8 @@ def theme_colors():
         "muted": muted,
         "popup_bg": shell.get("popups.background", background),
         "popup_fg": shell.get("popups.text", foreground),
+        "selected_fg": gum.get("GUM_CHOOSE_SELECTED_FOREGROUND", foreground),
+        "selected_bg": gum.get("GUM_CHOOSE_SELECTED_BACKGROUND", background),
         "selected_row_bg": hex_to_rgba(selected_bg, selected_alpha),
         "selected_row_fg": shell.get("menu.selected-text", accent),
         "hover_bg": hex_to_rgba(foreground, 0.05),

@@ -86,15 +86,17 @@ def setup_colors(colors):
 
     define(1, colors["background"])
     define(2, colors["foreground"])
-    define(3, colors["accent"])
-    define(4, colors["muted"])
+    define(3, colors["selected_bg"])
+    define(4, colors["selected_fg"])
+    define(5, colors["accent"])
+    define(6, colors["muted"])
 
     pairs = {}
     try:
         curses.init_pair(1, 2, 1)
-        curses.init_pair(2, 3, 1)
-        curses.init_pair(3, 4, 1)
-        curses.init_pair(4, 1, 3)
+        curses.init_pair(2, 5, 1)
+        curses.init_pair(3, 6, 1)
+        curses.init_pair(4, 4, 3)
         pairs = {
             "fg": curses.color_pair(1),
             "accent": curses.color_pair(2),
@@ -274,20 +276,22 @@ class Manager:
 
     def activate_item(self):
         if self.field >= 2 and self.editing_default():
+            if self.field == 2:
+                self.input_keywords(self.keywords, locked=True)
+                return
             self.message = "keyword and media settings are locked for the default"
             return
         if self.field == 3:
             self.pause_media = not self.pause_media
             self.message = ""
             return
-        prompt = ("Model" if self.field == 0 else
-                  "Language" if self.field == 1 else "Keywords")
-        current = (self.model if self.field == 0 else
-                   self.language if self.field == 1 else self.keywords)
-        ok, value = self.input_line(prompt, current)
-        if not ok and not (self.field == 2 and value == ""):
-            return
-        if self.field != 2 and not value:
+        if self.field == 2:
+            ok, value = self.input_keywords(self.keywords)
+        else:
+            prompt = "Model" if self.field == 0 else "Language"
+            current = self.model if self.field == 0 else self.language
+            ok, value = self.input_line(prompt, current)
+        if not ok or (self.field != 2 and not value):
             return
         if self.field == 0:
             self.model = value
@@ -607,6 +611,74 @@ class Manager:
             elif 32 <= ch < 127:
                 buf.insert(pos, chr(ch))
                 pos += 1
+
+    def input_keywords(self, initial, locked=False):
+        """Edit the long keyword prompt in a focused popup."""
+        height, width = self.stdscr.getmaxyx()
+        popup_width = min(max(44, width - 8), 72)
+        popup_height = 5
+        top = max(0, (height - popup_height) // 2)
+        left = max(0, (width - popup_width) // 2)
+        window = curses.newwin(popup_height, popup_width, top, left)
+        window.keypad(True)
+        buf = list(initial)
+        pos = len(buf)
+        try:
+            curses.curs_set(1)
+        except curses.error:
+            pass
+        try:
+            while True:
+                window.erase()
+                window.box()
+                title = (" Keywords · locked · Enter close · Esc cancel "
+                         if locked else
+                         " Keywords · Enter save · Esc cancel ")
+                window.addnstr(0, 2, title, popup_width - 4,
+                               self.pair("accent"))
+
+                available = popup_width - 4
+                start = max(0, min(pos - available + 1, len(buf) - available))
+                visible = "".join(buf[start:start + available])
+                window.addnstr(2, 2, visible.ljust(available), available,
+                               self.pair("fg"))
+                window.move(2, 2 + pos - start)
+                window.refresh()
+
+                ch = window.getch()
+                if ch in (10, 13, curses.KEY_ENTER):
+                    return True, "".join(buf).strip()
+                if ch == 27:
+                    return False, initial
+                if locked:
+                    continue
+                if ch in (curses.KEY_BACKSPACE, 127, 8):
+                    if pos > 0:
+                        buf.pop(pos - 1)
+                        pos -= 1
+                elif ch == curses.KEY_DC:
+                    if pos < len(buf):
+                        buf.pop(pos)
+                elif ch == curses.KEY_LEFT:
+                    pos = max(0, pos - 1)
+                elif ch == curses.KEY_RIGHT:
+                    pos = min(len(buf), pos + 1)
+                elif ch == curses.KEY_HOME:
+                    pos = 0
+                elif ch == curses.KEY_END:
+                    pos = len(buf)
+                elif ch == 21:
+                    buf = buf[pos:]
+                    pos = 0
+                elif 32 <= ch < 127:
+                    buf.insert(pos, chr(ch))
+                    pos += 1
+        finally:
+            try:
+                curses.curs_set(0)
+            except curses.error:
+                pass
+            self.draw()
 
     # --- drawing -----------------------------------------------------------------
 
