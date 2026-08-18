@@ -107,12 +107,31 @@ For quick language or voice-preset changes during a call, add this once to
 o.bind("SUPER + CTRL + ALT + V", "Cycle Voxtype preset", "bash -c '\"$HOME/.config/omarchy/plugins/io.github.kkosu.voxtype-presets/bin/omarchy-voxtype-presets\" cycle'")
 ```
 
-The optional popup sizing rule is in `hypr/voxtype_presets.lua`. To use the
-same compact `700x400` popup, add this line to your Hyprland configuration:
+### Popup look and feel
+
+The preset editor opens in a terminal window with the same presentation style
+as Omarchy's Dictation configuration. The optional rule in
+`hypr/voxtype_presets.lua` makes that window float, center itself, and use the
+compact `700x400` size shown in the screenshots. It only affects the Voxtype
+Switcher popup, not your other terminal windows.
+
+To enable this compact layout, add the following line to your Hyprland
+configuration:
 
 ```lua
 require("hypr.voxtype_presets")
 ```
+
+Then reload Hyprland:
+
+```bash
+hyprctl reload
+```
+
+The editor still works without this rule, but Hyprland will use its normal
+terminal placement and size. The standard marketplace installer does not
+modify `~/.config/hypr`, so this look-and-feel option is intentionally enabled
+manually by the user.
 
 ## Remove
 
