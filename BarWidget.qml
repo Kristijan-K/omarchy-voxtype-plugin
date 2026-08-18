@@ -56,9 +56,9 @@ BarWidget {
     cursorShape: Qt.PointingHandCursor
     onClicked: function(mouse) {
       if (mouse.button === Qt.RightButton) {
-       Util.execDetached("bash -c 'exec \\\"" + root.pluginDir + "/bin/voxtype-presets-floating\\\"'")
+       Util.execDetached("bash -c 'exec \"" + root.pluginDir + "/bin/voxtype-presets-floating\"'")
       } else {
-        Util.execDetached("bash -c 'exec \\\"" + root.pluginDir + "/bin/omarchy-voxtype-presets\\\" cycle'")
+        Util.execDetached("bash -c 'exec \"" + root.pluginDir + "/bin/omarchy-voxtype-presets\" cycle'")
       }
     }
     onEntered: if (root.bar) root.bar.showTooltip(root, "Voxtype preset: " + presetName + "\n" + presetModel + " · " + presetLanguage + "\nLeft click: cycle · Right click: manage")
