@@ -5,8 +5,8 @@ One integrated TUI in a compact Dictate-style floating presentation terminal
 (launched by right-clicking the Omarchy bar widget).
 
 A preset is a name, model, language, keyword prompt, and media-pause setting.
-The built-in default preset (English, base.en) keeps its keyword and media
-settings locked and cannot be deleted.
+The built-in default is seeded from the existing Voxtype configuration and
+cannot be deleted.
 
 Keys:
   j/k  ↑/↓               move between presets / editor fields
@@ -149,10 +149,6 @@ class Manager:
             preset.get("model") == "base.en" and
             preset.get("language") == "en")
 
-    def editing_default(self):
-        return self.editing and self.edit_index is not None and self.is_default(
-            self.presets[self.edit_index])
-
     def sync_from_selected(self):
         preset = self.selected()
         if preset is None:
@@ -241,9 +237,7 @@ class Manager:
 
     def cycle_field(self, delta):
         if self.field >= 2:
-            if self.editing_default():
-                self.message = "keyword and media settings are locked for the default"
-            elif self.field == 3:
+            if self.field == 3:
                 self.pause_media = not self.pause_media
                 self.message = ""
             else:
@@ -275,12 +269,6 @@ class Manager:
         return True
 
     def activate_item(self):
-        if self.field >= 2 and self.editing_default():
-            if self.field == 2:
-                self.input_keywords(self.keywords, locked=True)
-                return
-            self.message = "keyword and media settings are locked for the default"
-            return
         if self.field == 3:
             self.pause_media = not self.pause_media
             self.message = ""
@@ -612,7 +600,7 @@ class Manager:
                 buf.insert(pos, chr(ch))
                 pos += 1
 
-    def input_keywords(self, initial, locked=False):
+    def input_keywords(self, initial):
         """Edit the long keyword prompt in a focused popup."""
         height, width = self.stdscr.getmaxyx()
         popup_width = min(max(44, width - 8), 72)
@@ -631,9 +619,7 @@ class Manager:
             while True:
                 window.erase()
                 window.box()
-                title = (" Keywords · locked · Enter close · Esc cancel "
-                         if locked else
-                         " Keywords · Enter save · Esc cancel ")
+                title = " Keywords · Enter save · Esc cancel "
                 window.addnstr(0, 2, title, popup_width - 4,
                                self.pair("accent"))
 
@@ -650,8 +636,6 @@ class Manager:
                     return True, "".join(buf).strip()
                 if ch == 27:
                     return False, initial
-                if locked:
-                    continue
                 if ch in (curses.KEY_BACKSPACE, 127, 8):
                     if pos > 0:
                         buf.pop(pos - 1)
@@ -691,8 +675,8 @@ class Manager:
 
         preset = self.selected()
         editing = preset["name"] if preset else "none"
-        title = (f" Voxtype Presets — editing: {editing} "
-                 if self.editing else " Voxtype Presets ")
+        title = (f" Voxtype Switcher — editing: {editing} "
+                 if self.editing else " Voxtype Switcher ")
         try:
             std.addnstr(0, 0, title.ljust(width)[:width - 1], self.pair("sel"))
         except curses.error:
@@ -764,7 +748,6 @@ class Manager:
                 pass
 
     def draw_editor(self, top, width):
-        locked = self.editing_default()
         fields = (
             ("Model", self.model),
             ("Language", self.language),
@@ -773,8 +756,6 @@ class Manager:
         )
         for row, (label, value) in enumerate(fields):
             cursor = ">" if row == self.field else " "
-            if row >= 2 and locked:
-                value = f"{value} (locked)"
             max_value = max(12, width - 28)
             if len(value) > max_value:
                 value = value[:max_value - 3] + "..."

@@ -10,5 +10,5 @@ presentation_script="omarchy-show-logo; \"$ROOT_DIR/bin/voxtype-presets\"; if ((
 
 exec setsid uwsm-app -- xdg-terminal-exec \
   --app-id=org.omarchy.voxtype-presets \
-  --title="Voxtype Presets" \
+  --title="Voxtype Switcher" \
   -e bash -c "$presentation_script"

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "io.github.kkosu.voxtype-presets",
-  "name": "Voxtype Presets",
+  "name": "Voxtype Switcher",
   "version": "1.0.0",
   "author": "Kristijan K",
   "license": "MIT",
@@ -11,7 +11,7 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Voxtype Presets",
+    "displayName": "Voxtype Switcher",
     "description": "Switch Voxtype configuration presets.",
     "category": "Status",
     "allowMultiple": false,

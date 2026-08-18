@@ -1,16 +1,16 @@
-# Voxtype Presets for Omarchy
+# Voxtype Switcher for Omarchy
 
 [![Omarchy plugin](https://img.shields.io/badge/Omarchy-plugin-7aa2f7)](https://omarchyplugins.com/)
 
 Repository: https://github.com/Kristijan-K/omarchy-voxtype-plugin
 
-![Voxtype Presets preview](preview.png)
+![Voxtype Switcher preview](preview.png)
 
 Additional screenshots:
 
-![Voxtype preset notifications](assets/notifications.png)
+![Voxtype Switcher notifications](assets/notifications.png)
 
-![Voxtype preset editor](assets/editor.png)
+![Voxtype Switcher editor](assets/editor.png)
 
 An Omarchy Quattro bar plugin for switching between user-defined **Voxtype
 presets** — a name, **model**, **language**, keyword prompt, and media-pause
@@ -36,7 +36,8 @@ presets, especially when changing languages or models during a call.
   `~/.config/voxtype/config.toml` (comments preserved, timestamped backup)
   and restarts the `voxtype.service` user daemon — the only reload voxtype
   currently supports. Keyword and media overrides are available on non-default
-  presets; the protected default keeps those two settings locked.
+  presets; the default remains editable after its initial configuration is
+  copied.
 - **Missing models download automatically**: switching to a preset downloads
   the selected model (a fast no-op when it is already present). Whisper
   models are fetched directly because Voxtype 0.7.5 incorrectly treats
@@ -63,8 +64,8 @@ presets, especially when changing languages or models during a call.
 
 The editor shows four fields: `Model`, `Language`, `Keywords`, and `Pause
 media`. Use `Enter` to type a model, language, or keyword value; use `h/l` to
-cycle model/language values or toggle media pausing. The default preset's
-keyword and media fields are visibly locked. Press `Esc` to return to the
+cycle model/language values or toggle media pausing. The default preset is
+also editable; only deletion is locked. Press `Esc` to return to the
 preset list; continue editing other presets if needed, then press `s` there to
 save all drafts and apply the selected preset. Exact duplicate model/language
 combinations are rejected, while the same language may use different models.

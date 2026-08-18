@@ -2,8 +2,8 @@
 """omarchy-voxtype-presets — cycle, apply, and watch Voxtype presets.
 
 A preset is a name + model + language + keyword prompt + media-pause setting.
-The built-in default preset keeps its keyword/media settings locked and cannot
-be removed.
+The built-in default is seeded from the existing Voxtype configuration and
+cannot be removed.
 
   name     -> preset identifier
   model    -> [whisper] model
@@ -162,13 +162,9 @@ def apply_preset(data, preset):
     text = before_config or ""
     text = patch_toml(text, "whisper", "model", toml_value(model))
     text = patch_toml(text, "whisper", "language", toml_value(language))
-    # Older default records may not have these fields yet; leave those
-    # settings untouched until migration seeds the locked default values.
-    if (not is_default_preset(preset) or "keywords" in preset or
-            "pauseMedia" in preset):
-        prompt = f"Use these terms exactly when dictated: {keywords}" if keywords else ""
-        text = patch_toml(text, "whisper", "initial_prompt", toml_value(prompt))
-        text = patch_toml(text, "audio", "pause_media", toml_value(pause_media))
+    prompt = f"Use these terms exactly when dictated: {keywords}" if keywords else ""
+    text = patch_toml(text, "whisper", "initial_prompt", toml_value(prompt))
+    text = patch_toml(text, "audio", "pause_media", toml_value(pause_media))
 
     if CONFIG.exists():
         backup = CONFIG.with_name(CONFIG.name + f".bak.{int(time.time())}")
