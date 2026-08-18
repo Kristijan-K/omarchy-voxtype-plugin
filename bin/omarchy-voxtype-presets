@@ -268,7 +268,7 @@ def ensure_seeded():
 
 def cmd_seed():
     if PRESETS.exists():
-        print(f"presets already exist at {PRESETS}")
+        print(f"presets already exist at {PRESETS}", file=sys.stderr)
         return 0
     text = CONFIG.read_text() if CONFIG.exists() else ""
 
@@ -300,7 +300,7 @@ def cmd_seed():
     }
     save(data)
     STATE.write_text(json.dumps({"name": "english", "model": model, "language": language}, ensure_ascii=False) + "\n")
-    print(f"seeded presets at {PRESETS} (english default)")
+    print(f"seeded presets at {PRESETS} (english default)", file=sys.stderr)
 
 
 def cmd_migrate():
