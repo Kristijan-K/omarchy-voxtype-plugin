@@ -213,10 +213,11 @@ def apply_preset(data, preset):
 
 
 def cmd_list():
-    print(json.dumps(load(), ensure_ascii=False))
+    print(json.dumps(ensure_seeded(), ensure_ascii=False))
 
 
 def cmd_state():
+    ensure_seeded()
     print(json.dumps(state_json(), ensure_ascii=False), flush=True)
 
 
