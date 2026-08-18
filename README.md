@@ -1,25 +1,31 @@
-# omarchy-voxtype-plugin
+# Voxtype Presets for Omarchy
 
-Omarchy Quattro bar plugin for switching between user-defined **Voxtype
-presets** — a name plus a **model** and a **language** — with a real config
-reload.
+[![Omarchy plugin](https://img.shields.io/badge/Omarchy-plugin-7aa2f7)](https://omarchyplugins.com/)
+
+Repository: https://github.com/Kristijan-K/omarchy-voxtype-plugin
+
+![Voxtype Presets preview](preview.png)
+
+An Omarchy Quattro bar plugin for switching between user-defined **Voxtype
+presets** — a name, **model**, **language**, keyword prompt, and media-pause
+setting — with a real config reload.
 
 - **Bar widget** (`io.github.kkosu.voxtype-presets`): shows the active
   preset's language code (e.g. `󰍬 en`). **Left click** cycles to the next
   preset, **right click** opens the preset TUI.
-- **One TUI for everything**: right-click opens `voxtype-presets` in the same
-  floating presentation terminal the built-in Dictation indicator uses for
-  `voxtype configure` — presets list, apply, add, edit (model + language),
-  and delete all in one window.
+- **One TUI for everything**: right-click opens `voxtype-presets` in a compact
+  floating presentation terminal — presets list, apply, add, edit (model,
+  language, keywords, and media pause), and delete all in one window.
 - **Default preset**: `english` (`base.en` / `en`) is the Omarchy Quattro
   default and cannot be deleted.
-- **Keybind**: `SUPER + CTRL + ALT + V` cycles presets (in
-  `~/.config/hypr/bindings.lua`).
+- **Keybind**: optionally bind `SUPER + CTRL + ALT + V` to the installed CLI.
 - **Presets** are stored in `~/.config/voxtype/presets.json`; applying one
-  patches only `[whisper] model` and `[whisper] language` in
+  patches `[whisper] model`, `[whisper] language`,
+  `[whisper] initial_prompt`, and `[audio] pause_media` in
   `~/.config/voxtype/config.toml` (comments preserved, timestamped backup)
   and restarts the `voxtype.service` user daemon — the only reload voxtype
-  currently supports.
+  currently supports. Keyword and media overrides are available on non-default
+  presets; the protected default keeps those two settings locked.
 - **Missing models download automatically**: switching to a preset downloads
   the selected model (a fast no-op when it is already present). Whisper
   models are fetched directly because Voxtype 0.7.5 incorrectly treats
@@ -44,43 +50,82 @@ reload.
 | `Esc`                         | Return from the editor, or close the popup |
 | `q`                           | Quit; with changes choose `y` save or `d` discard |
 
-The editor shows only two fields: `Model` and `Language`. Use `Enter` to type a
-custom value, or use `h/l` to cycle the supported values. Press `Esc` to return
-to the preset list; continue editing other presets if needed, then press `s`
-there to save all drafts and apply the selected preset. Exact duplicate
-model/language combinations are rejected, while the same language may use
-different models. Nothing is written until `s`, or until `q` is confirmed with
-the save option.
+The editor shows four fields: `Model`, `Language`, `Keywords`, and `Pause
+media`. Use `Enter` to type a model, language, or keyword value; use `h/l` to
+cycle model/language values or toggle media pausing. The default preset's
+keyword and media fields are visibly locked. Press `Esc` to return to the
+preset list; continue editing other presets if needed, then press `s` there to
+save all drafts and apply the selected preset. Exact duplicate model/language
+combinations are rejected, while the same language may use different models.
+Nothing is written until `s`, or until `q` is confirmed with the save option.
 
-## Install
+## Requirements
+
+- Omarchy Quattro with the shell plugin system
+- Voxtype installed and configured (`voxtype.service`)
+- `bash`, `python3`, `jq`, and a terminal that supports `xdg-terminal-exec`
+- A user systemd session; applying a preset restarts `voxtype.service`
+
+## Install From GitHub
 
 ```bash
-./install-local.sh
+omarchy plugin add https://github.com/Kristijan-K/omarchy-voxtype-plugin.git --enable
 ```
 
-This validates the plugin folder, copies the QML into
-`~/.config/omarchy/plugins/io.github.kkosu.voxtype-presets/`, installs the CLI
-and TUI into `~/.local/bin/`, seeds the protected `english` default preset,
-then enables the widget in the bar's right section.
+The standard Omarchy installer validates the root `manifest.json`, clones the
+repository into `~/.config/omarchy/plugins/io.github.kkosu.voxtype-presets/`,
+and enables the widget in the right side of the bar. The CLI and TUI remain in
+the plugin directory; the widget invokes them there, so no separate installer
+or files in `~/.local/bin` are required.
+
+On first use, the CLI seeds `~/.config/voxtype/presets.json` from the active
+Voxtype configuration. Existing preset files are migrated when `migrate` is
+run. To update a git-installed plugin:
+
+```bash
+omarchy plugin update io.github.kkosu.voxtype-presets
+```
 
 ### Keybind
 
-Add once to `~/.config/hypr/bindings.lua`, then `hyprctl reload`:
+Add this once to `~/.config/hypr/bindings.lua`, then run `hyprctl reload`:
 
 ```lua
-o.bind("SUPER + CTRL + ALT + V", "Cycle voxtype preset", "omarchy-voxtype-presets cycle")
+o.bind("SUPER + CTRL + ALT + V", "Cycle Voxtype preset", "bash -c '\"$HOME/.config/omarchy/plugins/io.github.kkosu.voxtype-presets/bin/omarchy-voxtype-presets\" cycle'")
 ```
+
+The optional popup sizing rule is in `hypr/voxtype_presets.lua`. To use the
+same compact `700x400` popup, add this line to your Hyprland configuration:
+
+```lua
+require("hypr.voxtype_presets")
+```
+
+## Remove
+
+Disable and remove the plugin with the standard Omarchy command:
+
+```bash
+omarchy plugin remove io.github.kkosu.voxtype-presets --yes
+```
+
+This removes the plugin code but intentionally leaves Voxtype configuration,
+preset data, backups, and the optional Hyprland rule or keybind for safety.
+Remove those manually only if you no longer need them.
 
 ## CLI
 
 ```bash
-omarchy-voxtype-presets list          # presets.json
-omarchy-voxtype-presets state         # active preset one-liner
-omarchy-voxtype-presets cycle         # apply next preset
-omarchy-voxtype-presets apply <name>  # apply specific preset
-omarchy-voxtype-presets watch         # stream state (used by the bar widget)
-omarchy-voxtype-presets seed          # first-run default preset
-omarchy-voxtype-presets migrate       # strip legacy preset fields
+PLUGIN="$HOME/.config/omarchy/plugins/io.github.kkosu.voxtype-presets"
+CLI="$PLUGIN/bin/omarchy-voxtype-presets"
+
+"$CLI" list          # presets.json
+"$CLI" state         # active preset one-liner
+"$CLI" cycle         # apply next preset
+"$CLI" apply <name>  # apply specific preset
+"$CLI" watch         # stream state (used by the bar widget)
+"$CLI" seed          # first-run default preset
+"$CLI" migrate       # normalize and preserve override fields
 ```
 
 ## Debugging
@@ -89,4 +134,24 @@ omarchy-voxtype-presets migrate       # strip legacy preset fields
 omarchy plugin list --json | jq '.[] | select(.id == "io.github.kkosu.voxtype-presets")'
 omarchy-shell shell rescanPlugins
 qs log -p /usr/share/omarchy/shell --tail 100
+```
+
+If the widget is not visible after installation, run:
+
+```bash
+omarchy plugin enable io.github.kkosu.voxtype-presets right
+omarchy-shell shell rescanPlugins
+```
+
+## Publishing
+
+This repository is structured for the Omarchy plugin marketplace: the root
+contains `manifest.json`, `README.md`, `LICENSE`, `BarWidget.qml`, and all
+runtime files referenced by the widget. Before submitting an issue to the
+marketplace, validate the checkout with:
+
+```bash
+omarchy plugin validate .
+qmllint -I "$OMARCHY_PATH/shell" BarWidget.qml
+python3 -m py_compile bin/*.py
 ```

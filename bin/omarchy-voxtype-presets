@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """omarchy-voxtype-presets — cycle, apply, and watch Voxtype presets.
 
-A preset is a name + model + language. The built-in default preset
-(English, base.en) cannot be removed.
+A preset is a name + model + language + keyword prompt + media-pause setting.
+The built-in default preset keeps its keyword/media settings locked and cannot
+be removed.
 
   name     -> preset identifier
   model    -> [whisper] model
@@ -23,7 +24,7 @@ Commands:
   apply <name>       apply a specific preset
   watch              stream the state line, reprinting whenever it changes
   seed               create presets.json with the default English preset
-  migrate            strip legacy preset fields, keep name/model/language only
+  migrate            normalize preset fields, preserving keyword/media overrides
 """
 
 import copy
@@ -36,7 +37,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from voxtype_presets_lib import ensure_model, load, save  # noqa: E402
+from voxtype_presets_lib import config_defaults, ensure_model, load, save  # noqa: E402
 
 HOME = Path.home()
 CONFIG = Path(os.environ.get("VOXTYPE_CONFIG", str(HOME / ".config/voxtype/config.toml")))
@@ -44,6 +45,21 @@ PRESETS = HOME / ".config/voxtype/presets.json"
 STATE = HOME / ".config/voxtype/presets-state.json"
 
 EMPTY_STATE = {"name": "", "model": "", "language": ""}
+
+
+def bool_value(value, default=True):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() not in {"false", "0", "no", "off"}
+
+
+def is_default_preset(preset):
+    return bool(preset.get("default")) or (
+        preset.get("name") == "english" and
+        preset.get("model") == "base.en" and
+        preset.get("language") == "en")
 
 
 def find_preset(data, name):
@@ -125,6 +141,8 @@ def apply_preset(data, preset):
     name = preset.get("name", "")
     model = str(preset.get("model", "")).strip()
     language = str(preset.get("language", "auto")).strip() or "auto"
+    keywords = str(preset.get("keywords", "")).strip()
+    pause_media = bool_value(preset.get("pauseMedia"), True)
 
     if not model:
         print(f"preset {name!r} has no model", file=sys.stderr)
@@ -144,6 +162,13 @@ def apply_preset(data, preset):
     text = before_config or ""
     text = patch_toml(text, "whisper", "model", toml_value(model))
     text = patch_toml(text, "whisper", "language", toml_value(language))
+    # Older default records may not have these fields yet; leave those
+    # settings untouched until migration seeds the locked default values.
+    if (not is_default_preset(preset) or "keywords" in preset or
+            "pauseMedia" in preset):
+        prompt = f"Use these terms exactly when dictated: {keywords}" if keywords else ""
+        text = patch_toml(text, "whisper", "initial_prompt", toml_value(prompt))
+        text = patch_toml(text, "audio", "pause_media", toml_value(pause_media))
 
     if CONFIG.exists():
         backup = CONFIG.with_name(CONFIG.name + f".bak.{int(time.time())}")
@@ -225,6 +250,8 @@ def cmd_apply(name):
 
 
 def cmd_watch():
+    if not load().get("presets"):
+        cmd_seed()
     last = None
     while True:
         current = state_json()
@@ -251,6 +278,7 @@ def cmd_seed():
 
     model = cfg("whisper", "model", "base.en")
     language = cfg("whisper", "language", "en")
+    keywords, pause_media = config_defaults()
 
     data = {
         "active": "english",
@@ -259,6 +287,8 @@ def cmd_seed():
                 "name": "english",
                 "model": model,
                 "language": language,
+                "keywords": keywords,
+                "pauseMedia": pause_media,
                 "default": True,
             },
         ],
@@ -269,10 +299,11 @@ def cmd_seed():
 
 
 def cmd_migrate():
-    """Strip legacy fields (keywords, copyToClipboard, pauseMedia)."""
+    """Normalize preset fields while preserving keyword/media overrides."""
     data = load()
     migrated = []
     active = data.get("active", "")
+    default_keywords, default_pause_media = config_defaults()
 
     def unique_name(name):
         candidate = name or "preset"
@@ -288,6 +319,9 @@ def cmd_migrate():
             "name": unique_name(str(preset.get("name", ""))),
             "model": str(preset.get("model", "")).strip() or "base.en",
             "language": str(preset.get("language", "auto")).strip() or "auto",
+            "keywords": (str(preset["keywords"]).strip()
+                         if "keywords" in preset else default_keywords),
+            "pauseMedia": bool_value(preset.get("pauseMedia"), default_pause_media),
         }
         if any(p.get("model") == entry["model"] and
                p.get("language") == entry["language"] for p in migrated):
@@ -304,7 +338,8 @@ def cmd_migrate():
     if not any(p.get("default") for p in migrated):
         name = unique_name("english")
         migrated.insert(0, {"name": name, "model": "base.en",
-                            "language": "en", "default": True})
+                            "language": "en", "keywords": default_keywords,
+                            "pauseMedia": default_pause_media, "default": True})
         if not active:
             active = name
     data["presets"] = migrated

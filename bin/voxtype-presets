@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """voxtype-presets — voxtype-configure-style TUI for Voxtype presets.
 
-One integrated TUI in the Dictate-style floating presentation terminal
-(launched by right-clicking the Omarchy bar widget via
-`omarchy-launch-floating-terminal-with-presentation "voxtype-presets"`).
+One integrated TUI in a compact Dictate-style floating presentation terminal
+(launched by right-clicking the Omarchy bar widget).
 
-A preset is just a name + model + language. The built-in default preset
-(English, base.en) cannot be deleted.
+A preset is a name, model, language, keyword prompt, and media-pause setting.
+The built-in default preset (English, base.en) keeps its keyword and media
+settings locked and cannot be deleted.
 
 Keys:
   j/k  ↑/↓               move between presets / editor fields
@@ -32,7 +32,9 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from voxtype_presets_lib import ensure_model, load, save, theme_colors  # noqa: E402
+from voxtype_presets_lib import config_defaults, ensure_model, load, save, theme_colors  # noqa: E402
+
+CLI = Path(__file__).resolve().with_name("omarchy-voxtype-presets")
 
 MODELS = [
     "tiny", "tiny.en", "base", "base.en", "small", "small.en",
@@ -45,8 +47,16 @@ LANGS = ["auto"] + """af am ar as az ba be bg bn bo br bs ca cs cy da de el en e
 DEFAULT_MODEL = "base.en"
 DEFAULT_LANG = "en"
 
-HINTS_PRESETS = "j/k move · Enter apply · a add · e edit · d delete · s save all · q quit"
-HINTS_EDITOR = "j/k or ↑/↓ field · h/l or ←/→ cycle · Enter type · Esc back"
+HINTS_PRESETS = "j/k move · Enter apply · a add · e edit · d delete · s save · q quit"
+HINTS_EDITOR = "j/k field · h/l cycle · Enter edit/toggle · Esc back"
+
+
+def bool_value(value, default=True):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() not in {"false", "0", "no", "off"}
 
 
 def hex_rgb(hex_color):
@@ -119,6 +129,8 @@ class Manager:
         self.drafts = {}
         self.draft_new = set()
         self.removed = {}
+        self.keywords = ""
+        self.pause_media = True
         self.sync_from_selected()
 
     def pair(self, name):
@@ -135,14 +147,24 @@ class Manager:
             preset.get("model") == "base.en" and
             preset.get("language") == "en")
 
+    def editing_default(self):
+        return self.editing and self.edit_index is not None and self.is_default(
+            self.presets[self.edit_index])
+
     def sync_from_selected(self):
         preset = self.selected()
         if preset is None:
             self.model = ""
             self.language = ""
+            self.keywords = ""
+            self.pause_media = True
             return
-        self.model = str(preset.get("model", DEFAULT_MODEL))
-        self.language = str(preset.get("language", DEFAULT_LANG))
+        source = self.drafts.get(preset["name"], preset)
+        default_keywords, default_pause_media = config_defaults()
+        self.model = str(source.get("model", DEFAULT_MODEL))
+        self.language = str(source.get("language", DEFAULT_LANG))
+        self.keywords = str(source.get("keywords", default_keywords)).strip()
+        self.pause_media = bool_value(source.get("pauseMedia"), default_pause_media)
 
     # --- main loop ----------------------------------------------------------
 
@@ -209,13 +231,22 @@ class Manager:
 
     def move_item(self, delta):
         if self.editing:
-            self.field = max(0, min(1, self.field + delta))
+            self.field = max(0, min(3, self.field + delta))
             return
         if self.presets:
             self.sel = max(0, min(len(self.presets) - 1, self.sel + delta))
             self.sync_from_selected()
 
     def cycle_field(self, delta):
+        if self.field >= 2:
+            if self.editing_default():
+                self.message = "keyword and media settings are locked for the default"
+            elif self.field == 3:
+                self.pause_media = not self.pause_media
+                self.message = ""
+            else:
+                self.message = "press Enter to edit keywords"
+            return
         items = MODELS if self.field == 0 else LANGS
         current = self.model if self.field == 0 else self.language
         try:
@@ -242,15 +273,28 @@ class Manager:
         return True
 
     def activate_item(self):
-        prompt = "Model" if self.field == 0 else "Language"
-        current = self.model if self.field == 0 else self.language
+        if self.field >= 2 and self.editing_default():
+            self.message = "keyword and media settings are locked for the default"
+            return
+        if self.field == 3:
+            self.pause_media = not self.pause_media
+            self.message = ""
+            return
+        prompt = ("Model" if self.field == 0 else
+                  "Language" if self.field == 1 else "Keywords")
+        current = (self.model if self.field == 0 else
+                   self.language if self.field == 1 else self.keywords)
         ok, value = self.input_line(prompt, current)
-        if not ok or not value:
+        if not ok and not (self.field == 2 and value == ""):
+            return
+        if self.field != 2 and not value:
             return
         if self.field == 0:
             self.model = value
-        else:
+        elif self.field == 1:
             self.language = value
+        else:
+            self.keywords = value
 
     # --- actions -------------------------------------------------------------
 
@@ -262,8 +306,19 @@ class Manager:
                 name in self.removed):
             self.message = f"preset {name!r} already exists"
             return
-        self.presets.append({"name": name, "model": DEFAULT_MODEL,
-                             "language": DEFAULT_LANG})
+        default_keywords, default_pause_media = config_defaults()
+        source = self.selected()
+        if source is not None:
+            source = self.drafts.get(source["name"], source)
+        self.presets.append({
+            "name": name,
+            "model": DEFAULT_MODEL,
+            "language": DEFAULT_LANG,
+            "keywords": (source.get("keywords", default_keywords)
+                          if source else default_keywords),
+            "pauseMedia": (bool_value(source.get("pauseMedia"), default_pause_media)
+                            if source else default_pause_media),
+        })
         self.sel = len(self.presets) - 1
         self.sync_from_selected()
         self.editing = True
@@ -280,14 +335,17 @@ class Manager:
         name = preset["name"]
         if name in self.drafts:
             preset = self.drafts[name]
-            self.model = preset.get("model", DEFAULT_MODEL)
-            self.language = preset.get("language", DEFAULT_LANG)
             self.edit_original = (None if name in self.draft_new else
                                   dict(self.presets[self.sel]))
             self.edit_is_new = name in self.draft_new
         else:
             self.edit_original = dict(preset)
             self.edit_is_new = False
+        default_keywords, default_pause_media = config_defaults()
+        self.model = preset.get("model", DEFAULT_MODEL)
+        self.language = preset.get("language", DEFAULT_LANG)
+        self.keywords = str(preset.get("keywords", default_keywords)).strip()
+        self.pause_media = bool_value(preset.get("pauseMedia"), default_pause_media)
         self.edit_index = self.sel
         self.editing = True
         self.field = 0
@@ -300,6 +358,8 @@ class Manager:
                 "name": preset["name"],
                 "model": self.model,
                 "language": self.language,
+                "keywords": self.keywords,
+                "pauseMedia": self.pause_media,
             }
             source = self.drafts.get(preset["name"], preset)
             if self.is_default(source) or source.get("default"):
@@ -423,7 +483,7 @@ class Manager:
             return False
         if not self.fetch_model(preset.get("model", "")):
             return False
-        result = subprocess.run(["omarchy-voxtype-presets", "apply", preset["name"]],
+        result = subprocess.run([sys.executable, str(CLI), "apply", preset["name"]],
                                 check=False, capture_output=True, text=True)
         if result.returncode != 0:
             self.message = (result.stderr or result.stdout or
@@ -447,6 +507,8 @@ class Manager:
         for name, candidate in working.items():
             candidate["model"] = str(candidate.get("model", "")).strip()
             candidate["language"] = str(candidate.get("language", "auto")).strip() or "auto"
+            candidate["keywords"] = str(candidate.get("keywords", "")).strip()
+            candidate["pauseMedia"] = bool_value(candidate.get("pauseMedia"), True)
             if not candidate["model"]:
                 self.message = f"model cannot be empty in {name!r}"
                 return False
@@ -483,7 +545,7 @@ class Manager:
                     self.sync_from_selected()
                 return False
 
-        result = subprocess.run(["omarchy-voxtype-presets", "apply", candidate["name"]],
+        result = subprocess.run([sys.executable, str(CLI), "apply", candidate["name"]],
                                 check=False, capture_output=True, text=True)
         if result.returncode != 0:
             if changed:
@@ -593,7 +655,8 @@ class Manager:
                 pass
         hints = HINTS_EDITOR if self.editing else HINTS_PRESETS
         try:
-            std.addnstr(height - 1, 3, hints[:width - 5], width - 5, self.pair("muted"))
+            std.addnstr(height - 1, 3, hints[:width - 5], width - 5,
+                        self.pair("muted") | curses.A_DIM)
         except curses.error:
             pass
         std.refresh()
@@ -629,10 +692,21 @@ class Manager:
                 pass
 
     def draw_editor(self, top, width):
-        fields = (("Model", self.model), ("Language", self.language))
+        locked = self.editing_default()
+        fields = (
+            ("Model", self.model),
+            ("Language", self.language),
+            ("Keywords", self.keywords),
+            ("Pause media", "on" if self.pause_media else "off"),
+        )
         for row, (label, value) in enumerate(fields):
             cursor = ">" if row == self.field else " "
-            text = f" {cursor} {label:<10} [ {value} ]"
+            if row >= 2 and locked:
+                value = f"{value} (locked)"
+            max_value = max(12, width - 28)
+            if len(value) > max_value:
+                value = value[:max_value - 3] + "..."
+            text = f" {cursor} {label:<12} [ {value} ]"
             pair = self.pair("sel") if row == self.field else self.pair("fg")
             try:
                 self.stdscr.addnstr(top + row, 3, text, width - 6, pair)

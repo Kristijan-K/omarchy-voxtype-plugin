@@ -3,9 +3,9 @@
   "id": "io.github.kkosu.voxtype-presets",
   "name": "Voxtype Presets",
   "version": "1.0.0",
-  "author": "kkosu",
+  "author": "Kristijan K",
   "license": "MIT",
-  "description": "Cycle and manage Voxtype presets (model, language, vocabulary, output mode, media pause) from the Omarchy bar.",
+  "description": "Manage Voxtype model, language, vocabulary, and media-pause presets from the Omarchy bar.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"

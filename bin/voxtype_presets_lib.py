@@ -1,7 +1,6 @@
 """Shared helpers for the voxtype presets scripts (CLI, GTK popup, TUI).
 
-Installed to ~/.local/bin alongside the other scripts; they add this file's
-directory to sys.path and import it as `voxtype_presets_lib`.
+Loaded from the plugin's `bin/` directory by the CLI and TUI scripts.
 """
 
 import json
@@ -11,6 +10,7 @@ from pathlib import Path
 
 PRESETS = Path.home() / ".config/voxtype/presets.json"
 STATE = Path.home() / ".config/voxtype/presets-state.json"
+CONFIG = Path(os.environ.get("VOXTYPE_CONFIG", str(Path.home() / ".config/voxtype/config.toml")))
 THEME_DIR = Path.home() / ".local/state/omarchy/current/theme"
 
 DEFAULT_THEME = {
@@ -50,6 +50,17 @@ def parse_toml_flat(path):
             key, value = line.split("=", 1)
             data[f"{section}.{key.strip()}"] = value.strip().strip('"')
     return data
+
+
+def config_defaults():
+    """Return the current global keyword prompt and media-pause setting."""
+    values = parse_toml_flat(CONFIG)
+    prompt = values.get("whisper.initial_prompt", "")
+    prefix = "Use these terms exactly when dictated:"
+    if prompt.startswith(prefix):
+        prompt = prompt[len(prefix):].strip()
+    pause = values.get("audio.pause_media", "true").strip().lower()
+    return prompt, pause not in {"false", "0", "no", "off"}
 
 
 def hex_to_rgba(hex_color, alpha):

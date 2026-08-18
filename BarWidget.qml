@@ -18,6 +18,7 @@ BarWidget {
   property string presetName: ""
   property string presetModel: ""
   property string presetLanguage: ""
+  readonly property string pluginDir: "$HOME/.config/omarchy/plugins/io.github.kkosu.voxtype-presets"
 
   readonly property string labelText: presetLanguage !== "" ? ("󰍬 " + presetLanguage) : "󰍬"
 
@@ -29,8 +30,8 @@ BarWidget {
     presetLanguage = String(data.language || "")
   }
 
-  Process {
-    command: ["bash", "-c", "exec \"$HOME/.local/bin/omarchy-voxtype-presets\" watch"]
+    Process {
+    command: ["bash", "-c", "exec \"" + root.pluginDir + "/bin/omarchy-voxtype-presets\" watch"]
     running: true
     stdout: SplitParser {
       onRead: function(data) { root.applyState(data) }
@@ -55,9 +56,9 @@ BarWidget {
     cursorShape: Qt.PointingHandCursor
     onClicked: function(mouse) {
       if (mouse.button === Qt.RightButton) {
-        Util.execDetached("omarchy-launch-floating-terminal-with-presentation \"voxtype-presets\"")
+       Util.execDetached("bash -c 'exec \\\"" + root.pluginDir + "/bin/voxtype-presets-floating\\\"'")
       } else {
-        Util.execDetached("\"$HOME/.local/bin/omarchy-voxtype-presets\" cycle")
+        Util.execDetached("bash -c 'exec \\\"" + root.pluginDir + "/bin/omarchy-voxtype-presets\\\" cycle'")
       }
     }
     onEntered: if (root.bar) root.bar.showTooltip(root, "Voxtype preset: " + presetName + "\n" + presetModel + " · " + presetLanguage + "\nLeft click: cycle · Right click: manage")

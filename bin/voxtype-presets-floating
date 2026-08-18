@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Use the same presentation wrapper as Omarchy's launcher, but with a
+# dedicated app-id so this compact TUI can have its own window rule.
+source omarchy-restart-gum
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+presentation_script="omarchy-show-logo; \"$ROOT_DIR/bin/voxtype-presets\"; if (( $? != 130 )); then omarchy-show-done; fi"
+
+exec setsid uwsm-app -- xdg-terminal-exec \
+  --app-id=org.omarchy.voxtype-presets \
+  --title="Voxtype Presets" \
+  -e bash -c "$presentation_script"
